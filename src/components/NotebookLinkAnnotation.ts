@@ -93,6 +93,7 @@ export function normalizeNotebookLinks(editor: Editor, resolve: (value: string) 
   const compact = (value: string) => value.replace(/\s+/gu, ' ').trim()
   for (const { from, to, mark } of [...ranges.values()].reverse()) {
     const href = String(mark.attrs.href ?? '')
+    if (readLinkFields(mark.attrs.title)?.explanation) continue
     const target = resolve(href)
     if (target.secret && schema.nodes.notebookSecret) {
       transaction.replaceWith(from, to, schema.nodes.notebookSecret.create(target.secret))
@@ -173,6 +174,7 @@ export function bindLinkInteractions(editor: Editor, root: HTMLElement, resolve:
     const target = resolve(href).label
     const original = editor.state.doc.textBetween(range.from, range.to)
     const fields = readLinkFields(mark.attrs.title)
+    if (fields?.explanation) return null
     return { ...range, href, target, original, annotation: fields?.annotation ?? (original === target || original === href ? '' : original), marks: editor.state.doc.nodeAt(range.from)?.marks ?? [] }
   }
   const placeholder = (field: Field) => field === 'target' ? 'URL / IP / 笔记名' : '标注'

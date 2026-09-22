@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import type { Editor } from '@tiptap/react'
+import { getMarkRange, type Editor } from '@tiptap/react'
 import { FileText, Plus, Trash2, Undo2 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useLedger } from '../store'
@@ -9,12 +9,12 @@ import { safeNoteLink } from '../notes'
 import './transfer-tray.css'
 import { BrowserCaptureBridge } from './BrowserCaptureBridge'
 import { flushNative, ledgerStorage, nativeInvoke } from '../native-storage'
-import { flushNoteFiles } from '../file-notebooks'
+import { flushNoteFiles, transferHref } from '../file-notebooks'
 import { readTransferReferences, TRANSFER_MIME, TRANSFER_STORAGE, type TextCapture, type TransferClip } from '../transfer-reference'
 
 interface Origin { title: string; href: string }
 type Clip = TransferClip
-interface Binding { editor: Editor; origin: () => Origin; commit: () => void }
+interface Binding { editor: Editor; origin: () => Origin; commit: () => Promise<boolean> }
 interface Drag { clip: Clip; x: number; y: number; width: number; height: number; compact: boolean; over: boolean }
 interface TrayContext { register: (binding: Binding) => () => void }
 const Context = createContext<TrayContext | null>(null)
@@ -27,6 +27,27 @@ const readClips = (): Clip[] => {
     const value: unknown = JSON.parse(ledgerStorage.getItem(STORAGE) ?? '[]')
     return Array.isArray(value) ? value.filter((item): item is Clip => !!item && typeof item.id === 'string' && typeof item.text === 'string' && typeof item.title === 'string' && typeof item.href === 'string' && safeNoteLink(item.href)).map((item) => ({ ...item, fields: item.fields ? readLinkFields(linkAttributes('', item.fields).title) ?? undefined : undefined })) : []
   } catch { return [] }
+}
+
+function selectedClip(binding: Binding, resolve: (href: string) => ReturnType<typeof resolveNotebookTarget>): Clip | null {
+  const { editor } = binding, { from, to, empty } = editor.state.selection
+  if (empty) return null
+  const text = editor.state.doc.textBetween(from, to, '\n')
+  if (!text.trim()) return null
+  const origin = binding.origin()
+  const mark = editor.state.doc.nodeAt(from)?.marks.find(mark => mark.type === editor.schema.marks.link)
+  const range = mark && getMarkRange(editor.state.doc.resolve(from), mark.type, mark.attrs)
+  const fields = readLinkFields(mark?.attrs.title)
+  if (mark && range && to <= range.to && !fields?.explanation) {
+    const destination = resolve(transferHref(mark.attrs.href, origin.href))
+    const label = editor.state.doc.textBetween(range.from, range.to)
+    return { id: crypto.randomUUID(), createdAt: new Date().toISOString(), href: destination.href,
+      title: fields?.sourceTitle || (destination.getContent ? destination.label : label), text: fields?.excerpt || label,
+      fields: fields ?? { annotation: label === destination.label ? '' : label } }
+  }
+  let anchor = ''
+  editor.state.doc.nodesBetween(0, from, node => { if (node.type.name === 'heading' && node.attrs.id) anchor = node.attrs.id })
+  return { ...origin, href: origin.href.split('#')[0] + (anchor ? `#${encodeURIComponent(anchor)}` : ''), text, id: crypto.randomUUID(), createdAt: new Date().toISOString() }
 }
 
 export function TransferTrayProvider({ children }: { children: ReactNode }) {
@@ -88,6 +109,12 @@ export function TransferTrayProvider({ children }: { children: ReactNode }) {
   const register = useCallback((binding: Binding) => {
     const { editor } = binding
     const root = editor.view.dom
+    const stage = () => {
+      const clip = selectedClip(binding, resolve.current)
+      if (!clip) { report('请先选中要收集的文字或关联块'); return }
+      updateClips(items => [clip, ...items]); setHovered(true); setBrowsing(true); report('已加入中转站')
+    }
+    root.addEventListener('notechain-stage-selection', stage)
     let timer: ReturnType<typeof setTimeout> | undefined
     let frame = 0
     let replaying = false
@@ -138,19 +165,17 @@ export function TransferTrayProvider({ children }: { children: ReactNode }) {
       let clip: Clip, rect: DOMRect
       if (link) {
         const raw = link.getAttribute('data-notebook-target') ?? link.getAttribute('href') ?? ''
-        const destination = resolve.current(raw.startsWith('#') ? binding.origin().href.split('#')[0] + raw : raw)
+        if (readLinkFields(link.getAttribute('data-notebook-link'))?.explanation) return
+        const destination = resolve.current(transferHref(raw, binding.origin().href))
         if (!destination.href || !safeNoteLink(destination.href)) return
         const fields = readLinkFields(link.getAttribute('data-notebook-link')) ?? { annotation: link.textContent === destination.label ? '' : link.textContent ?? '' }
         clip = { title: fields.sourceTitle || destination.label, href: destination.href, fields, text: fields.excerpt || fields.annotation || destination.label, id: crypto.randomUUID(), createdAt: new Date().toISOString() }
         rect = link.getBoundingClientRect()
       } else {
         if (!onSelection || !range) return
-        const text = editor.state.doc.textBetween(selection.from, selection.to, '\n')
-        if (!text.trim()) return
-        const origin = binding.origin()
-        let anchor = ''
-        editor.state.doc.nodesBetween(0, selection.from, (node) => { if (node.type.name === 'heading' && node.attrs.id) anchor = node.attrs.id })
-        clip = { ...origin, href: origin.href.split('#')[0] + (anchor ? `#${encodeURIComponent(anchor)}` : ''), text, id: crypto.randomUUID(), createdAt: new Date().toISOString() }
+        const selected = selectedClip(binding, resolve.current)
+        if (!selected) return
+        clip = selected
         rect = range.getBoundingClientRect()
       }
       const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? selection.from
@@ -218,6 +243,7 @@ export function TransferTrayProvider({ children }: { children: ReactNode }) {
     window.addEventListener('blur', cancel)
     return () => {
       reset()
+      root.removeEventListener('notechain-stage-selection', stage)
       if (target.current?.editor === editor) { target.current = null; setReady(false) }
       editor.off('focus', updateTarget); editor.off('selectionUpdate', updateTarget); editor.off('transaction', updateTarget)
       document.removeEventListener('pointerdown', down, true)
@@ -264,26 +290,30 @@ export function TransferTrayProvider({ children }: { children: ReactNode }) {
     if (!binding || binding.editor.isDestroyed || !binding.editor.isEditable || binding.editor.view.composing || !binding.editor.state.selection.empty || !binding.editor.state.selection.$from.parent.inlineContent || binding.editor.state.selection.$from.parent.type.spec.code) return fail('请先在笔记正文点击插入位置')
     const { editor, commit } = binding
     const source = resolveNotebookTarget(clip.href, assets, cases, findings, tasks)
-    const fields = clip.fields ?? { annotation: '', excerpt: clip.text }
+    const fields = { ...(clip.fields ?? { annotation: '', excerpt: clip.text }), transferId: clip.id }
     const from = editor.state.selection.from
     const { $from } = editor.state.selection
     const touchesLink = (node: typeof $from.nodeBefore) => node?.marks.some((mark) => mark.type === editor.schema.marks.link)
     const leadingGap = touchesLink($from.nodeBefore)
     const trailingGap = touchesLink($from.nodeAfter)
     let inserted = false
+    editor.state.doc.descendants(node => {
+      if (node.marks.some(mark => mark.type === editor.schema.marks.link && readLinkFields(mark.attrs.title)?.transferId === clip.id)) inserted = true
+    })
+    consumed.current.add(clip.id)
+    let saved: Promise<boolean> | undefined
     // Persist the destination before consuming the source clip.
     flushSync(() => {
       // Unmarked separators keep adjacent clips from the same source distinct.
-      inserted = editor.chain().focus().insertContent([
+      if (!inserted) inserted = editor.chain().focus().insertContent([
         ...(leadingGap ? [{ type: 'text', text: ' ', marks: [] }] : []),
         { type: 'text', text: fields.annotation || (source.getContent ? source.label : fields.sourceTitle || clip.title.trim()) || source.label || clip.href, marks: [{ type: 'link', attrs: linkAttributes(source.href, fields) }] },
         ...(trailingGap ? [{ type: 'text', text: ' ', marks: [] }] : []),
       ]).run()
-      if (inserted) commit()
+      if (inserted) saved = commit()
     })
-    if (!inserted) return fail('当前位置无法插入')
-    consumed.current.add(clip.id)
-    try { await flushNoteFiles(); await flushNative() } catch { consumed.current.delete(clip.id); return fail('保存失败，暂存已保留') }
+    if (!inserted) { consumed.current.delete(clip.id); return fail('当前位置无法插入') }
+    try { if (!await saved) throw new Error('Destination was not saved'); await flushNoteFiles(); await flushNative() } catch { consumed.current.delete(clip.id); return fail('保存失败，暂存已保留') }
     setLeaving((current) => [...current, clip.id])
     requestAnimationFrame(() => {
       if (editor.isDestroyed || matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -379,7 +409,7 @@ export function TransferTrayProvider({ children }: { children: ReactNode }) {
   </>, document.body)}</Context.Provider>
 }
 
-export function useTransferEditor(editor: Editor | null, origin: Origin, commit: () => void, inactive: boolean) {
+export function useTransferEditor(editor: Editor | null, origin: Origin, commit: () => Promise<boolean>, inactive: boolean) {
   const context = useContext(Context)
   const latest = useRef({ origin, commit })
   latest.current = { origin, commit }
@@ -388,4 +418,5 @@ export function useTransferEditor(editor: Editor | null, origin: Origin, commit:
     if (!editor || inactive || !register) return
     return register({ editor, origin: () => latest.current.origin, commit: () => latest.current.commit() })
   }, [editor, inactive, register])
+  return () => { if (editor && !inactive) editor.view.dom.dispatchEvent(new Event('notechain-stage-selection')) }
 }

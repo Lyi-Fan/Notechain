@@ -36,6 +36,51 @@ fn relative(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn md(path: &Path) -> bool { path.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("md") || s.eq_ignore_ascii_case("markdown")) }
+fn image_folder(path: &Path, name: &str) -> bool {
+    let name = name.to_lowercase();
+    if !["attachments", "assets", "images", "img", "图片", "附件"].contains(&name.as_str()) && !name.ends_with(".assets") && !name.ends_with("_assets") { return false; }
+    let mut pending = vec![path.to_path_buf()]; let mut visited = 0;
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = fs::read_dir(directory) else { return false; };
+        for entry in entries {
+            visited += 1; if visited > 2048 { return false; }
+            let Ok(entry) = entry else { return false; };
+            let Ok(kind) = entry.file_type() else { return false; };
+            if kind.is_symlink() || md(&entry.path()) { return false; }
+            if kind.is_dir() { pending.push(entry.path()); }
+        }
+    }
+    true
+}
+fn image_path(root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(name) = component else { return Err("Image path escapes the notebook".into()); };
+        let name_text = name.to_string_lossy();
+        if [".fan", ".git", ".obsidian"].iter().any(|hidden| name_text.eq_ignore_ascii_case(hidden)) || (cfg!(windows) && !windows_name(&name_text)) { return Err("Invalid image path".into()); }
+        path.push(name);
+        let metadata = fs::symlink_metadata(&path).map_err(error)?;
+        if metadata.file_type().is_symlink() { return Err("Image links cannot traverse symbolic links".into()); }
+        #[cfg(windows)]
+        { use std::os::windows::fs::MetadataExt; if metadata.file_attributes() & 0x400 != 0 { return Err("Image links cannot traverse reparse points".into()); } }
+    }
+    let real = fs::canonicalize(&path).map_err(error)?;
+    if !real.starts_with(root) || !real.is_file() { return Err("Image must be inside the opened notebook".into()); }
+    Ok(real)
+}
+fn image_reference(source: &Path, reference: &str) -> Result<PathBuf, String> {
+    let reference = reference.replace('\\', "/");
+    let mut path = if reference.starts_with('/') { PathBuf::new() } else { source.parent().unwrap_or(Path::new("")).to_path_buf() };
+    for component in Path::new(reference.trim_start_matches('/')).components() {
+        match component {
+            Component::Normal(name) => { if name.to_string_lossy().contains(':') { return Err("Invalid image reference".into()); } path.push(name); }
+            Component::CurDir => {}
+            Component::ParentDir => { if !path.pop() { return Err("Image reference escapes the notebook".into()); } }
+            _ => return Err("Invalid image reference".into()),
+        }
+    }
+    Ok(path)
+}
 fn allowed(book: &Notebook, path: &Path, ancestors: bool) -> bool {
     book.scopes.iter().any(|scope| scope.is_empty() || path.starts_with(scope) || (ancestors && Path::new(scope).starts_with(path)))
 }
@@ -137,6 +182,7 @@ impl Notebooks {
             if name.starts_with('.') { continue; }
             let kind = entry.file_type().map_err(error)?;
             if kind.is_symlink() || (!kind.is_dir() && !md(&entry.path())) { continue; }
+            if kind.is_dir() && image_folder(&entry.path(), &name) { continue; }
             let rel = Path::new(value).join(&name);
             if !allowed(&book, &rel, true) { continue; }
             entries.push(json!({"name": name, "path": portable_path(&rel), "kind": if kind.is_dir() { "directory" } else { "file" }}));
@@ -249,6 +295,51 @@ impl Notebooks {
         let (_, mime) = media::inspect(&bytes)?;
         Ok(json!({"base64": base64::engine::general_purpose::STANDARD.encode(bytes), "mime": mime}))
     }
+    pub fn resolve_image(&self, id: &str, source: &str, reference: &str, wiki: bool) -> Result<Value, String> {
+        use base64::Engine;
+        if reference.len() > 8192 { return Err("Image path is too long".into()); }
+        let book = Self::book(&*self.registry.lock().map_err(error)?, id)?;
+        let source_path = scoped(&book, source, false)?;
+        if !md(&source_path) { return Err("Image source must be a Markdown note".into()); }
+        let root = fs::canonicalize(&book.root).map_err(error)?;
+        let decoded = percent_encoding::percent_decode_str(reference).decode_utf8().map_err(error)?;
+        let source = source_path.strip_prefix(&root).map_err(error)?;
+        let reference = decoded.replace('\\', "/");
+        let relative = if reference.starts_with("file:") {
+            let path = url::Url::parse(&reference).map_err(error)?.to_file_path().map_err(|_| "Invalid file image URL")?;
+            path.strip_prefix(&root).map_err(|_| "Image is outside the opened notebook")?.to_path_buf()
+        } else if let Ok(path) = Path::new(&reference).strip_prefix(&root) { path.to_path_buf() }
+        else { image_reference(source, &reference)? };
+        let mut found = image_path(&root, &relative).ok();
+        if found.is_none() && wiki {
+            let root_relative = image_reference(Path::new("note.md"), &reference)?;
+            found = image_path(&root, &root_relative).ok();
+            if found.is_none() && !reference.contains('/') {
+                let mut directories = vec![root.clone()]; let mut matches = Vec::new(); let mut visited = 0;
+                while let Some(directory) = directories.pop() {
+                    for entry in fs::read_dir(&directory).map_err(error)? {
+                        visited += 1; if visited > 20000 { return Err("Image search limit reached; use an explicit relative image path".into()); }
+                        let entry = entry.map_err(error)?; let kind = entry.file_type().map_err(error)?;
+                        if kind.is_symlink() || entry.file_name().to_string_lossy().starts_with('.') { continue; }
+                        #[cfg(windows)]
+                        { use std::os::windows::fs::MetadataExt; if entry.metadata().map_err(error)?.file_attributes() & 0x400 != 0 { continue; } }
+                        let relative = entry.path().strip_prefix(&root).map_err(error)?.to_path_buf();
+                        if kind.is_dir() {
+                            if allowed(&book, &relative, true) || entry.path().starts_with(source_path.parent().unwrap()) || image_folder(&entry.path(), &entry.file_name().to_string_lossy()) { directories.push(entry.path()); }
+                        } else if kind.is_file() && entry.file_name().to_string_lossy() == reference {
+                            matches.push(image_path(&root, &relative)?);
+                            if matches.len() > 1 { return Err("More than one image has this name; use its folder path in the embed".into()); }
+                        }
+                    }
+                }
+                found = matches.pop();
+            }
+        }
+        let path = found.ok_or("Image was not found inside the opened notebook")?;
+        if fs::metadata(&path).map_err(error)?.len() > 20 * 1024 * 1024 { return Err("Image exceeds 20 MB".into()); }
+        let bytes = fs::read(path).map_err(error)?; let (_, mime) = media::inspect(&bytes)?;
+        Ok(json!({"base64":base64::engine::general_purpose::STANDARD.encode(bytes),"mime":mime}))
+    }
     pub fn import_image(&self, id: &str, value: &str, bytes: &[u8]) -> Result<Value, String> {
         let book = Self::book(&*self.registry.lock().map_err(error)?, id)?;
         let file = scoped(&book, value, false)?;
@@ -346,6 +437,7 @@ pub async fn notebook(app: tauri::AppHandle, input: Value) -> Result<Value, Stri
             "rename" => books.rename(field(&input, "id")?, field(&input, "path")?, field(&input, "name")?),
             "forget" => { books.forget(field(&input, "id")?)?; Ok(Value::Null) },
             "image" => books.image(field(&input, "id")?, field(&input, "path")?),
+            "resolveImage" => books.resolve_image(field(&input, "id")?, field(&input, "path")?, field(&input, "reference")?, input["wiki"].as_bool().unwrap_or(false)),
             "importImage" => books.import_image(field(&input, "id")?, field(&input, "path")?, &serde_json::from_value::<Vec<u8>>(input["bytes"].clone()).map_err(error)?),
             "trash" => {
                 let book = Notebooks::book(&*books.registry.lock().map_err(error)?, field(&input, "id")?)?;
@@ -404,6 +496,35 @@ mod tests {
         for name in ["CON", "nul.md", "LPT1.txt", "COM9", "CONIN$", "file:stream", "trailing.", "trailing ", "a?b", "a|b"] { assert!(!windows_name(name), "{name}"); }
         for name in ["中文笔记.md", "COM10.md", "[notes] & 'x'.md"] { assert!(windows_name(name), "{name}"); }
         for value in ["../note.md", "/note.md", "folder\\note.md", ".FAN/notebooks.json"] { assert!(relative(value).is_err()); }
+    }
+    #[test]
+    fn imported_images_are_hidden_but_remain_resolvable_after_reopen() {
+        let f = Fixture::new(); let id = f.book();
+        let source = "category/nested/note.md";
+        let imported = f.service.import_image(&id, source, include_bytes!("../icons/icon.png")).unwrap();
+        assert!(!f.service.children(&id, "category/nested").unwrap().as_array().unwrap().iter().any(|entry| entry["name"] == "attachments"));
+        let reopened = Notebooks::new(&f.path.join("profile")).unwrap();
+        assert_eq!(reopened.resolve_image(&id, source, imported["src"].as_str().unwrap(), false).unwrap()["mime"], "image/png");
+        fs::write(f.path.join("library/book/category/nested/attachments/Keep.md"), "A real note").unwrap();
+        assert!(reopened.children(&id, "category/nested").unwrap().as_array().unwrap().iter().any(|entry| entry["name"] == "attachments"));
+    }
+    #[test]
+    fn wiki_images_resolve_unique_names_and_reject_ambiguity() {
+        let f = Fixture::new(); let id = f.book();
+        fs::create_dir_all(f.path.join("library/book/附件")).unwrap();
+        fs::write(f.path.join("library/book/附件/Pasted image 中文.png"), include_bytes!("../icons/icon.png")).unwrap();
+        assert!(f.service.resolve_image(&id, "category/nested/note.md", "Pasted image 中文.png", true).is_ok());
+        assert!(f.service.resolve_image(&id, "category/nested/note.md", "../../附件/Pasted%20image%20%E4%B8%AD%E6%96%87.png", false).is_ok());
+        fs::write(f.path.join("library/book/unrelated/Pasted image 中文.png"), include_bytes!("../icons/icon.png")).unwrap();
+        assert!(f.service.resolve_image(&id, "category/nested/note.md", "Pasted image 中文.png", true).unwrap_err().contains("More than one"));
+        assert!(f.service.resolve_image(&id, "category/nested/note.md", "附件/Pasted image 中文.png", true).is_ok());
+    }
+    #[test]
+    fn image_references_cannot_escape_notebook_or_read_non_images() {
+        let f = Fixture::new(); let id = f.book();
+        for reference in ["../../../outside.png", "../../.fan/secret.png", "javascript:alert(1)", "note.md", "file:///etc/passwd"] {
+            assert!(f.service.resolve_image(&id, "category/nested/note.md", reference, false).is_err(), "{reference}");
+        }
     }
     #[test]
     fn category_registers_parent_and_whitelists_only_selected_directory() {

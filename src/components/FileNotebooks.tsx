@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { BookOpen, Check, ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderOpen, FolderPlus, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Search, Sun, Target, Trash2, X } from 'lucide-react'
 import { Brand } from './Brand'
 import { initials } from '../lib'
-import { notebookCall, noteFileUrl, resolveFilePath, isMarkdownLink, relativeFileLink, saveNoteFile, flushEditors, unsavedFiles, acknowledgeFileCopy, type FileEntry, type FileNotebook, type FileSession, type NoteFile, type OpenedNotebook } from '../file-notebooks'
+import { fileDocumentTools, fileReadingKey, isMarkdownLink, notebookCall, noteFileUrl, relativeFileLink, saveNoteFile, flushEditors, unsavedFiles, acknowledgeFileCopy, type FileEntry, type FileNotebook, type FileSession, type NoteFile, type OpenedNotebook } from '../file-notebooks'
 import { ledgerStorage, nativeInvoke } from '../native-storage'
 import { writeClipboardText } from '../platform'
 import { useLedger } from '../store'
@@ -180,11 +180,11 @@ export function FileNotebooks() {
   }, [notebookId, file, folder, !!book, book?.scopes.join('\n'), loadChildren])
   useEffect(() => {
     if (!document || !reader.current) return
-    const key = 'file-reading:' + notebookId + ':' + file
+    const key = fileReadingKey(notebookId, file)
     const frame = requestAnimationFrame(() => {
       if (location.hash) {
         try { reader.current?.querySelector('#' + CSS.escape(decodeURIComponent(location.hash.slice(1))))?.scrollIntoView() } catch { /* Invalid anchors leave the current reading position intact. */ }
-      } else if (reader.current) reader.current.scrollTop = Number(ledgerStorage.getItem(key) ?? 0)
+      } else if (reader.current) reader.current.scrollTop = Number(ledgerStorage.getItem(key) ?? ledgerStorage.getItem('file-reading:' + notebookId + ':' + file) ?? 0)
     })
     return () => cancelAnimationFrame(frame)
   }, [!!document, notebookId, file, location.hash, externalVersion])
@@ -283,28 +283,11 @@ export function FileNotebooks() {
   }
   const currentSession = session.current
   const fileContext = useMemo(() => currentSession && book ? {
+    ...fileDocumentTools(notebookId, file, href => { void run(() => go(href)) }),
     title: baseName(file),
     restoredDraft: !!documentRef.current?.draft,
     linkChoices: () => Object.values(treeRef.current).flat().filter(entry => entry.kind === 'file' && entry.path !== file).map(entry => ({ id: entry.path, title: entry.name, value: entry.path, href: relativeFileLink(file, entry.path) })),
     onDraft: (content: string) => { currentSession.draft = content; currentSession.dirty = true },
-    resolveLink: (value: string) => isMarkdownLink(value) ? { href: value, label: baseName(value), bodyPending: true } : null,
-    openLink: (value: string) => {
-      if (!isMarkdownLink(value) && !value.startsWith('#')) return false
-      try {
-        const target = resolveFilePath(file, value)
-        void run(() => go(noteFileUrl(notebookId, target.path) + target.hash))
-      } catch (error) { setError(errorText(error)) }
-      return true
-    },
-    importImage: async (image: File) => notebookCall<{ src: string; name: string }>({ action: 'importImage', id: notebookId, path: file, bytes: [...new Uint8Array(await image.arrayBuffer())] }),
-    resolveImage: async (src: string) => {
-      if (/^https?:\/\//i.test(src)) return { url: src }
-      const target = resolveFilePath(file, src)
-      const result = await notebookCall<{ base64: string; mime: string }>({ action: 'image', id: notebookId, path: target.path })
-      const bytes = Uint8Array.from(atob(result.base64), c => c.charCodeAt(0))
-      const url = URL.createObjectURL(new Blob([bytes], { type: result.mime }))
-      return { url, revoke: () => URL.revokeObjectURL(url) }
-    },
   } : null, [currentSession, book?.id, file, notebookId, externalVersion])
   const save = async (content: string) => {
     if (!currentSession) throw new Error('文件尚未读取')
@@ -369,7 +352,7 @@ export function FileNotebooks() {
           {file && <ActionMenu label="文件操作" items={[{ label: '另存副本', icon: <FilePlus size={14} />, disabled: !document, onSelect: () => void run(saveCopy) }, ...entryMenu({ path: file, name: baseName(file), kind: 'file' })]} />}
         </div>
         <div className="file-reader" ref={reader} onScroll={event => { if (file) {
-          readingPending.current = { key: 'file-reading:' + notebookId + ':' + file, top: event.currentTarget.scrollTop }
+          readingPending.current = { key: fileReadingKey(notebookId, file), top: event.currentTarget.scrollTop }
           clearTimeout(readingTimer.current)
           readingTimer.current = setTimeout(() => { const pending = readingPending.current; if (pending) ledgerStorage.setItem(pending.key, String(pending.top)); readingPending.current = null }, 200)
         } }}>

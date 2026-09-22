@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@codemirror/view'
@@ -28,7 +29,9 @@ export function MarkdownEditor({ value, onChange, minHeight = 220, placeholder, 
         ...(inline ? [] : [lineNumbers()]),
         history(),
         markdown(),
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{', "'", '"', '`'] } }]),
+        closeBrackets(),
+        keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())

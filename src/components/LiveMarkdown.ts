@@ -6,6 +6,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
 
 interface Session {
@@ -177,11 +178,11 @@ export const LiveMarkdown = Extension.create<{ onChange: (markdown: string) => v
             state: EditorState.create({
               doc: raw,
               selection: { anchor: Math.max(0, Math.min(raw.length, position - from - (inline ? 0 : 1) + (inline ? raw.match(/^(?:`+|\*+|_+|~+)/)?.[0].length ?? 0 : raw.match(/^(?:#{1,6}|>) /)?.[0].length ?? 0))) },
-              extensions: [markdown(), history(), EditorView.lineWrapping,
+              extensions: [markdown(), history(), EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{', "'", '"', '`'] } }]), closeBrackets(), EditorView.lineWrapping,
                 keymap.of([
                   { key: 'Escape', run: () => { finishLiveMarkdown(editor, true); return true } },
                   ...(inline ? [{ key: 'Enter', run: () => { finishLiveMarkdown(editor, true); return true } }] : []),
-                  { key: 'Tab', run: tabCode }, ...defaultKeymap, ...historyKeymap,
+                  { key: 'Tab', run: tabCode }, ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap,
                 ]),
                 EditorView.contentAttributes.of({ 'aria-label': 'Markdown 就地编辑', spellcheck: 'false' }),
                 EditorView.updateListener.of(update => {

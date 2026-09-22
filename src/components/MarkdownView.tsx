@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useContext, useMemo, useState, type ReactNode } from 'react'
+import { FileDocumentContext } from './FileDocumentContext'
 import { writeClipboardText } from '../platform'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -11,6 +12,7 @@ import { ManagedImageView } from './ManagedImage'
 import { SecretValue } from './SecretValue'
 import { useLedger } from '../store'
 import { isSecretFinding } from '../secrets'
+import { remarkImageEmbeds } from '../image-markdown'
 
 interface MarkdownViewProps {
   content: string
@@ -68,6 +70,7 @@ function CodeBlock({ children, className }: { children?: ReactNode; className?: 
 // URLs remain stripped by rehype-sanitize.
 const sanitizeSchema = {
   ...defaultSchema,
+  attributes: { ...defaultSchema.attributes, img: [...(defaultSchema.attributes?.img ?? []), 'dataWikiImage', 'width', 'height'] },
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), 'asset', 'case'],
@@ -76,12 +79,13 @@ const sanitizeSchema = {
 }
 
 export function MarkdownView({ content, onInternalLink }: MarkdownViewProps) {
+  const file = useContext(FileDocumentContext)
   const { findings } = useLedger()
   const secrets = useMemo(() => new Map(findings.filter(isSecretFinding).map(finding => [`/cases/${finding.caseId}/findings/${finding.id}`, finding])), [findings])
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkImageEmbeds]}
         rehypePlugins={[[rehypeSanitize, sanitizeSchema], rehypeHeadingIds]}
         components={{
           code({ className, children, ...props }) {
@@ -93,14 +97,15 @@ export function MarkdownView({ content, onInternalLink }: MarkdownViewProps) {
             if (secret) return <SecretValue identity={secret.id} value={secret.value!} />
             const fields = readLinkFields(title)
             const tooltip = fields ? fields.originalTitle : title
-            const internal = href?.startsWith('asset://') || href?.startsWith('case://') || href?.startsWith('/cases/') || href?.startsWith('#')
+            const fileTarget = href && file?.resolveFileLink(href)
+            const internal = fileTarget || href?.startsWith('asset://') || href?.startsWith('case://') || href?.startsWith('/cases/') || href?.startsWith('/notebooks/') || href?.startsWith('#')
             if (internal) {
-              return <a href={href} title={tooltip} {...props} onClick={(event) => { event.preventDefault(); if (href) onInternalLink?.(href) }}>{children}</a>
+              return <a href={href} title={tooltip} {...props} onClick={(event) => { event.preventDefault(); if (href) onInternalLink?.(fileTarget ? fileTarget.href : href) }}>{children}</a>
             }
             return <a href={href} title={tooltip} {...props} target="_blank" rel="noreferrer"><span>{children}</span><ExternalLink size={12} aria-hidden="true" /></a>
           },
-          img({ src, alt, title, className }) {
-            return <ManagedImageView src={src} alt={alt} title={title} className={className} />
+          img({ src, alt, title, className, width, height, node }) {
+            return <ManagedImageView src={src} alt={alt} title={title} className={className} width={width} height={height} wiki={!!node?.properties?.dataWikiImage} />
           },
         }}
       >

@@ -5,12 +5,13 @@ import { createPortal, flushSync } from 'react-dom'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { createNotebookMarkdown } from '../notebook-markdown'
+import { MarkdownTyping, NotebookBold, NotebookHorizontalRule, NotebookInlineCode, NotebookItalic, NotebookStrike } from '../markdown-formatting'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { TableKit } from '@tiptap/extension-table'
 import Placeholder from '@tiptap/extension-placeholder'
 import Heading from '@tiptap/extension-heading'
-import { Bold, Check, Code2, FileText, Flag, Heading2, ImagePlus, Italic, Link2, ListTodo, LockKeyhole, Search, X } from 'lucide-react'
+import { Bold, Check, Code2, Copy, Flag, Heading2, ImagePlus, Inbox, Italic, ListTodo, LockKeyhole, MessageSquarePlus, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useLedger } from '../store'
 import { assetMarkdown, caseMarkdown, findingMarkdown, headingSlug, noteHref, safeNoteLink } from '../notes'
@@ -18,10 +19,12 @@ import { MarkdownEditor } from './MarkdownEditor'
 import { CodeBlockPreferences, NotebookCodeBlock } from './NotebookCodeBlock'
 import { NotebookSelection } from './NotebookSelection'
 import { bindLinkInteractions, deleteWholeLinkAtBoundary, finishLinkAnnotation, normalizeNotebookLinks, NotebookLink, NotebookLinkAnnotation } from './NotebookLinkAnnotation'
-import { linkAttributes, resolveNotebookTarget } from '../notebook-links'
+import { linkAttributes, readLinkFields, resolveNotebookTarget } from '../notebook-links'
+import { explanationHref, explanationsIn, updateExplanation } from '../explanations'
+import { ContextMenu, type ContextMenuPosition } from './ContextMenu'
 import { AssetLinkPreview, type AssetLinkPreviewHandle, type PreviewItem } from './AssetLinkPreview'
 import { flushNative, nativeInvoke } from '../native-storage'
-import { openExternalUrl } from '../platform'
+import { openExternalUrl, writeClipboardText } from '../platform'
 import { useTransferEditor } from './TransferTray'
 import { finishLiveMarkdown, hasLiveMarkdown, LiveMarkdown } from './LiveMarkdown'
 import { ManagedImage } from './ManagedImage'
@@ -47,9 +50,8 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
   const [showCodeLines, setShowCodeLines] = useState(true)
   const [draft, setDraft] = useState(value)
   const [bubble, setBubble] = useState<{ x: number; y: number } | null>(null)
-  const [picker, setPicker] = useState<{ from: number; to: number } | null>(null)
-  const [query, setQuery] = useState('')
-  const [annotation, setAnnotation] = useState('')
+  const [context, setContext] = useState<{ position: ContextMenuPosition; explanationId?: string } | null>(null)
+  const closeContext = useCallback(() => setContext(null), [])
   const [imageNotice, setImageNotice] = useState('')
   const imageInput = useRef<HTMLInputElement>(null)
   const previewRef = useRef<AssetLinkPreviewHandle>(null)
@@ -61,17 +63,21 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const composing = useRef(false)
+  const savingVersion = useRef(0)
   saveRef.current = onSave
   const commit = useCallback(() => {
     clearTimeout(timer.current)
-    if (composing.current) return
-    if (pending.current === null) return
+    if (composing.current) return Promise.resolve(false)
+    if (pending.current === null) return Promise.resolve(true)
     const content = pending.current
+    const version = ++savingVersion.current
     pending.current = null
-    const saved = saveRef.current(content)
-    void Promise.resolve(saved).then(() => new Promise(resolve => setTimeout(resolve, 0))).then(() => flushNative()).then(() => {
-      setSaveError(''); if (pending.current === null) setDirty(false)
-    }).catch(error => { setDirty(true); setSaveError(String(error)); if (pending.current === null) pending.current = content })
+    let saved: void | Promise<unknown>
+    try { saved = saveRef.current(content) } catch (error) { saved = Promise.reject(error) }
+    return Promise.resolve(saved).then(() => new Promise(resolve => setTimeout(resolve, 0))).then(() => flushNative()).then(() => {
+      if (version === savingVersion.current) { setSaveError(''); if (pending.current === null) setDirty(false) }
+      return true
+    }).catch(error => { if (version === savingVersion.current) { setDirty(true); setSaveError(String(error)); if (pending.current === null) pending.current = content } return false })
   }, [])
   const change = useCallback((content: string) => {
     setDraft(content)
@@ -128,13 +134,23 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
   }
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: false, codeBlock: false, link: false }), NotebookLink.configure({ openOnClick: false, protocols: ['asset', 'case'], isAllowedUri: (url) => safeNoteLink(url) || (!!fileRef.current && isMarkdownLink(url)) }), AnchoredHeading, NotebookCodeBlock, NotebookLinkAnnotation, NotebookSelection,
+      StarterKit.configure({ heading: false, codeBlock: false, link: false, bold: false, italic: false, code: false, strike: false, horizontalRule: false }), NotebookBold, NotebookItalic, NotebookInlineCode, NotebookStrike, NotebookHorizontalRule, MarkdownTyping, NotebookLink.configure({ openOnClick: false, protocols: ['asset', 'case'], isAllowedUri: (url) => safeNoteLink(url) || (!!fileRef.current && isMarkdownLink(url)) }), AnchoredHeading, NotebookCodeBlock, NotebookLinkAnnotation, NotebookSelection,
       markdownExtension, TaskList, TaskItem.configure({ nested: true }), TableKit,
       ManagedImage, NotebookSecret, LiveMarkdown.configure({ onChange: change }), Placeholder.configure({ placeholder: '写点什么…' }),
     ],
     content: value, contentType: 'markdown',
     editorProps: {
       attributes: { class: 'notebook-prose', 'aria-label': label, spellcheck: 'false' },
+      handlePaste: (_view, event) => {
+        const current = editorRef.current, text = event.clipboardData?.getData('text/plain')
+        if (!current || !text || event.clipboardData?.getData('text/html') || current.isActive('codeBlock') || current.isActive('code')) return false
+        const parsed = current.markdown!.parse(text)
+        const blocks = parsed.content ?? []
+        const content = blocks.length === 1 && blocks[0].type === 'paragraph' ? blocks[0].content : blocks
+        if (!content?.length) return false
+        event.preventDefault()
+        return current.commands.insertContent(content)
+      },
       handleKeyDown: (view, event) => {
         if (!event.isComposing && !view.composing && !event.ctrlKey && !event.altKey && !event.metaKey && (event.key === 'Backspace' || event.key === 'Delete') && editorRef.current && deleteWholeLinkAtBoundary(editorRef.current, event.key)) {
           event.preventDefault()
@@ -165,8 +181,6 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
       }
       change(next.getMarkdown())
       requestAnimationFrame(assignAnchors)
-      const { from, empty, $from } = next.state.selection
-      if (!transaction.getMeta('linkAnnotation') && !hasLiveMarkdown(next) && empty && $from.parent.textBetween(0, $from.parentOffset).endsWith('[[')) { setPicker({ from: from - 2, to: from }); setQuery(''); setAnnotation('') }
     },
     onSelectionUpdate: ({ editor: next }) => updateBubble(next),
     onBlur: () => { commit(); setBubble(null) },
@@ -175,19 +189,19 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
   const sourceAsset = assets.find((asset) => asset.id === docId)
   const sourceCase = cases.find((item) => item.id === docId)
   const sourceFinding = findings.find((item) => item.id === docId)
-  useTransferEditor(editor, {
+  const stageSelection = useTransferEditor(editor, {
     title: sourceAsset?.title ?? sourceCase?.name ?? sourceFinding?.title ?? fileRef.current?.title ?? label,
-    href: sourceAsset ? noteHref(sourceAsset) : sourceCase ? `/cases/${sourceCase.id}` : sourceFinding ? `/cases/${sourceFinding.caseId}/findings/${sourceFinding.id}` : location.pathname + location.search,
-  }, commit, source || !!picker)
+    href: sourceAsset ? noteHref(sourceAsset) : sourceCase ? `/cases/${sourceCase.id}` : sourceFinding ? `/cases/${sourceFinding.caseId}/findings/${sourceFinding.id}` : fileRef.current?.href ?? location.pathname + location.search,
+  }, commit, source)
   useEffect(() => {
     if (!editor || source) return
     const frame = requestAnimationFrame(() => normalizeNotebookLinks(editor, (target) => targetRef.current(target)))
     return () => cancelAnimationFrame(frame)
   }, [editor, source, assets, cases, findings, tasks])
   useEffect(() => {
-    if (!editor || source || picker || !rootRef.current) return
+    if (!editor || source || !rootRef.current) return
     return bindLinkInteractions(editor, rootRef.current, (target) => targetRef.current(target), () => { previewRef.current?.dismiss(); setBubble(null) }, (href) => linkRef.current(href))
-  }, [editor, source, picker])
+  }, [editor, source])
   useEffect(() => {
     const leave = () => { finishLiveMarkdown(editorRef.current); finishLinkAnnotation(editorRef.current); if (pending.current !== null) flushSync(commit) }
     const exporting = (event: Event) => { if ((event as CustomEvent).detail === docId) leave() }
@@ -228,25 +242,18 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
     onFinding({ text, anchor, from, to, replace: (markdown) => { editor.chain().focus().insertContentAt({ from, to }, markdown, { contentType: 'markdown' }).run(); commit() } }, sensitive)
     setBubble(null)
   }
-  const choices = useMemo(() => {
-    if (!picker) return []
-    const search = query.toLowerCase()
-    if (fileRef.current) return fileRef.current.linkChoices().filter(item => (item.title + ' ' + item.value).toLowerCase().includes(search)).slice(0, 8)
-    const matches: { id: string; title: string; value: string; href: string; caseId?: string }[] = []
-    for (const asset of assets) {
-      if (asset.id !== docId && `${asset.title} ${asset.value}`.toLowerCase().includes(search)) matches.push({ id: asset.id, title: asset.title, value: asset.value, href: noteHref(asset), caseId: asset.caseId })
-      if (matches.length === 8) break
-    }
-    return matches
-  }, [picker, assets, docId, query])
-  const urlChoice = safeNoteLink(query.trim()) || /^(?:\d{1,3}(?:\.\d{1,3}){3}|localhost|[\w-]+(?:\.[\w-]+)+)(?::\d+)?(?:[/?#]|$)/i.test(query.trim()) ? query.trim() : ''
-  const insertLink = (href: string, defaultLabel: string) => {
-    if (!editor || !picker) return
-    const target = resolveTarget(href)
-    editor.chain().focus().insertContentAt(picker, { type: 'text', text: annotation.trim() || target.label || defaultLabel, marks: [{ type: 'link', attrs: linkAttributes(target.href, { annotation: annotation.trim() }) }] }).run()
-    setPicker(null); setBubble(null); setAnnotation('')
+  const explanations = useMemo(() => explanationsIn(editor), [editor, draft])
+  const addExplanation = () => {
+    if (!editor || embedded || editor.state.selection.empty) return
+    const { from, to, $from, $to } = editor.state.selection
+    if (!$from.sameParent($to) || !$from.parent.inlineContent || editor.isActive('codeBlock')) return
+    const title = editor.state.doc.textBetween(from, to)
+    if (!title.trim()) return
+    const id = crypto.randomUUID()
+    editor.chain().focus().setMark('link', linkAttributes(explanationHref(id), { annotation: title, explanation: { id, content: '' } })).run()
+    setBubble(null)
+    requestAnimationFrame(() => previewRef.current?.openExplanation(id))
   }
-  const choose = (choice: typeof choices[number]) => insertLink(choice.href, choice.title)
   const insertImages = async (files: File[]) => {
     if (!editor || editor.isDestroyed || !files.length) return
     if (source) { setImageNotice('请返回笔记后插入图片'); return }
@@ -270,6 +277,12 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
     finally { editor.off('transaction', map) }
   }
   const renderPreviewEditor = (item: PreviewItem) => {
+    if (item.kind === 'explanation') return <FileDocumentContext.Provider value={file ? { ...file, title: item.title, restoredDraft: false, onDraft: () => {} } : null}><NotebookEditor key={item.key} embedded docId={docId + ':' + item.key} value={item.explanation.content} label="扩展解释正文" onSave={async content => {
+      if (!editor) throw new Error('原笔记已关闭')
+      updateExplanation(editor, item.explanation.id, content)
+      if (!await commit()) throw new Error('扩展解释尚未保存到原笔记')
+    }} /></FileDocumentContext.Provider>
+    if (item.kind === 'file') return null
     if (item.kind === 'asset') return <NotebookEditor key={item.record.id} embedded docId={item.record.id} value={assetMarkdown(item.record)} label={`${item.record.title}笔记正文`} onSave={(noteMarkdown) => updateAsset(item.record.id, { noteMarkdown })} />
     if (item.kind === 'case') {
       const caseAssets = assets.filter((asset) => item.record.assetIds.includes(asset.id))
@@ -278,7 +291,14 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
     }
     return <NotebookEditor key={item.record.id} embedded docId={item.record.id} value={findingMarkdown(item.record)} label={`${item.record.title}笔记`} onSave={(noteMarkdown) => updateFinding(item.record.id, { noteMarkdown })} />
   }
-  return <div className="notebook-editor" ref={rootRef} onCompositionStartCapture={() => { composing.current = true }} onCompositionEndCapture={() => { composing.current = false; clearTimeout(timer.current); timer.current = setTimeout(commit, 0) }} onPasteCapture={(event) => {
+  return <div className="notebook-editor" ref={rootRef} onContextMenu={event => {
+    if (source || embedded || !editor) return
+    const link = event.target instanceof Element ? event.target.closest('a[data-notebook-link]') : null
+    const explanationId = readLinkFields(link?.getAttribute('data-notebook-link'))?.explanation?.id
+    if (!explanationId && editor.state.selection.empty) return
+    event.preventDefault(); setBubble(null)
+    setContext({ position: { x: event.clientX, y: event.clientY, trigger: editor.view.dom }, explanationId })
+  }} onCompositionStartCapture={() => { composing.current = true }} onCompositionEndCapture={() => { composing.current = false; clearTimeout(timer.current); timer.current = setTimeout(commit, 0) }} onPasteCapture={(event) => {
     const files = [...event.clipboardData.files].filter(file => file.type.startsWith('image/'))
     if (files.length) { event.preventDefault(); event.stopPropagation(); void insertImages(files) }
   }} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }} onDropCapture={(event) => {
@@ -289,24 +309,25 @@ export function NotebookEditor({ docId, value, onSave, label = '笔记正文', o
     const position = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })
     if (position) editor?.commands.setTextSelection(position.pos)
     void insertImages(files)
-  }} onKeyDown={(event) => { if (event.key === 'Escape' && !(event.target as HTMLElement).closest('.notebook-live-source')) { setPicker(null); setBubble(null); previewRef.current?.dismiss(); editor?.commands.focus() } }}>
+  }} onKeyDown={(event) => { if (event.key === 'Escape' && !(event.target as HTMLElement).closest('.notebook-live-source')) { setContext(null); setBubble(null); previewRef.current?.dismiss(); editor?.commands.focus() } }}>
     <CodeBlockPreferences.Provider value={{ showLines: showCodeLines, toggleLines: () => setShowCodeLines((visible) => !visible) }}>
       {source ? <MarkdownEditor inline value={draft} minHeight={420} placeholder="Markdown 源码" onChange={change} /> : <EditorContent editor={editor} />}
     </CodeBlockPreferences.Provider>
     {imageNotice && <p className="notebook-image-notice" role="status">{imageNotice}</p>}
     {saveError && <p className="notebook-image-notice" role="alert">保存失败：{saveError}</p>}
     <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => { const files = [...event.target.files ?? []]; event.target.value = ''; void insertImages(files) }} />
-    {((footer) => footerTarget ? createPortal(footer, footerTarget) : footer)(<div className="notebook-editor-foot"><span role="status">{dirty ? '保存中…' : <><Check size={12} />已保存</>}</span><span>{draft.replace(/\s/g, '').length} 字</span>{!source && <button type="button" title="插入图片" aria-label="插入图片" onClick={() => imageInput.current?.click()}><ImagePlus size={16} /></button>}<button type="button" title={source ? '返回笔记' : 'Markdown 源码'} aria-label={source ? '返回笔记' : 'Markdown 源码'} onClick={() => { finishLiveMarkdown(editor); if (source) { editor?.commands.setContent(draft, { contentType: 'markdown', emitUpdate: false }); requestAnimationFrame(assignAnchors) } commit(); setSource(!source); setBubble(null) }}><Code2 size={15} /></button></div>)}
-    {bubble && !source && !picker && <div className="notebook-bubble" role="toolbar" aria-label="选中文本操作" style={{ left: bubble.x, top: bubble.y }} onMouseDown={(event) => event.preventDefault()}>
-      <button title="加粗" aria-label="加粗" onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={16} /></button><button title="斜体" aria-label="斜体" onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={16} /></button><button title="标题" aria-label="标题" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={17} /></button><button title="待办" aria-label="待办" onClick={() => editor?.chain().focus().toggleTaskList().run()}><ListTodo size={17} /></button><button title="关联笔记" aria-label="关联笔记" onClick={() => { const selection = editor?.state.selection; if (selection) { setPicker({ from: selection.from, to: selection.to }); setQuery(''); setAnnotation('') } }}><Link2 size={16} /></button>{onFinding && <><i /><button title="记为发现" aria-label="记为发现" onClick={() => selectFinding(false)}><Flag size={16} /></button><button title="收起为敏感发现" aria-label="收起为敏感发现" onClick={() => selectFinding(true)}><LockKeyhole size={16} /></button></>}
+    {((footer) => footerTarget ? createPortal(footer, footerTarget) : footer)(<div className="notebook-editor-foot"><span role="status">{dirty ? '保存中…' : <><Check size={12} />已保存</>}</span><span>{(source ? draft : editor?.state.doc.textContent ?? '').replace(/\s/g, '').length} 字</span>{!source && <button type="button" title="插入图片" aria-label="插入图片" onClick={() => imageInput.current?.click()}><ImagePlus size={16} /></button>}<button type="button" title={source ? '返回笔记' : 'Markdown 源码'} aria-label={source ? '返回笔记' : 'Markdown 源码'} onClick={() => { finishLiveMarkdown(editor); if (source) { editor?.commands.setContent(draft, { contentType: 'markdown', emitUpdate: false }); requestAnimationFrame(assignAnchors) } commit(); setSource(!source); setBubble(null) }}><Code2 size={15} /></button></div>)}
+    {bubble && !source && !context && <div className="notebook-bubble" role="toolbar" aria-label="选中文本操作" style={{ left: bubble.x, top: bubble.y }} onMouseDown={(event) => event.preventDefault()}>
+      <button title="加粗" aria-label="加粗" onClick={() => editor?.chain().focus().toggleBold().run()}><Bold size={16} /></button><button title="斜体" aria-label="斜体" onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic size={16} /></button><button title="标题" aria-label="标题" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={17} /></button><button title="待办" aria-label="待办" onClick={() => editor?.chain().focus().toggleTaskList().run()}><ListTodo size={17} /></button>{!embedded && <button title="添加扩展解释" aria-label="添加扩展解释" onClick={addExplanation}><MessageSquarePlus size={16} /></button>}<button title="加入中转站" aria-label="加入中转站" onClick={stageSelection}><Inbox size={16} /></button>{onFinding && <><i /><button title="记为发现" aria-label="记为发现" onClick={() => selectFinding(false)}><Flag size={16} /></button><button title="收起为敏感发现" aria-label="收起为敏感发现" onClick={() => selectFinding(true)}><LockKeyhole size={16} /></button></>}
     </div>}
-    {picker && <div className="notebook-picker-shade" onMouseDown={() => setPicker(null)}><div className="notebook-picker" role="dialog" aria-label="关联笔记" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="notebook-picker-search"><Search size={17} /><input autoFocus aria-label="搜索关联笔记" placeholder="URL 或笔记名称" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (urlChoice) insertLink(urlChoice, urlChoice); else if (choices[0]) choose(choices[0]) } if (event.key === 'ArrowDown') { event.preventDefault(); (event.currentTarget.closest('.notebook-picker')?.querySelector('.notebook-picker-result') as HTMLElement)?.focus() } }} /><button title="关闭" aria-label="关闭关联笔记" onClick={() => setPicker(null)}><X size={16} /></button></div>
-      <input className="notebook-picker-annotation" aria-label="标注（可选）" placeholder="标注（可选）" value={annotation} onChange={(event) => setAnnotation(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (!query.trim() && annotation.trim()) insertLink('', ''); else if (urlChoice) insertLink(urlChoice, urlChoice); else if (choices[0]) choose(choices[0]) } }} />
-      {urlChoice && <button className="notebook-picker-result" onClick={() => insertLink(urlChoice, urlChoice)}><Link2 size={18} /><span><strong>{urlChoice}</strong></span></button>}
-      {!query.trim() && annotation.trim() && <button className="notebook-picker-result" onClick={() => insertLink('', '')}><Link2 size={18} /><span><strong>{annotation.trim()}</strong></span></button>}
-      {choices.map((asset) => <button className="notebook-picker-result" key={asset.id} onClick={() => choose(asset)}><FileText size={18} /><span><strong>{asset.title}</strong><small>{cases.find((item) => item.id === asset.caseId)?.name}</small></span></button>)}{!choices.length && !urlChoice && <p className="notebook-empty">没有找到笔记</p>}
-    </div></div>}
-    {!embedded && !source && !picker && <FileDocumentContext.Provider value={null}><AssetLinkPreview ref={previewRef} root={rootRef} assets={assets} cases={cases} findings={findings} tasks={tasks} onOpen={(href) => linkRef.current(href)} renderEditor={renderPreviewEditor} /></FileDocumentContext.Provider>}
+    {context && editor && <ContextMenu position={context.position} label="正文操作" onClose={closeContext} items={context.explanationId ? [
+      { label: '编辑扩展解释', icon: <MessageSquarePlus size={15} />, onSelect: () => previewRef.current?.openExplanation(context.explanationId!) },
+      { label: '移除解释，保留文字', icon: <Trash2 size={15} />, onSelect: () => { updateExplanation(editor, context.explanationId!, null); void commit() } },
+    ] : [
+      { label: '添加扩展解释', icon: <MessageSquarePlus size={15} />, onSelect: addExplanation, disabled: !editor.state.selection.$from.sameParent(editor.state.selection.$to) || editor.isActive('codeBlock') },
+      { label: '加入中转站', icon: <Inbox size={15} />, onSelect: stageSelection },
+      { label: '复制', icon: <Copy size={15} />, onSelect: () => { void writeClipboardText(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, '\n')) } },
+    ]} />}
+    {!embedded && !source && <FileDocumentContext.Provider value={null}><AssetLinkPreview ref={previewRef} root={rootRef} assets={assets} cases={cases} findings={findings} tasks={tasks} explanations={explanations} resolveFileLink={file?.resolveFileLink} onOpen={(href) => linkRef.current(href)} renderEditor={renderPreviewEditor} /></FileDocumentContext.Provider>}
   </div>
 }

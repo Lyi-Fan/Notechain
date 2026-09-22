@@ -4,7 +4,7 @@ import { displayUrl } from './url-display'
 import { isSecretFinding, maskSecret } from './secrets'
 
 const PREFIX = 'asset-ledger-link:v1:'
-export interface LinkFields { annotation: string; excerpt?: string; originalTitle?: string; sourceTitle?: string; sourceAnchor?: { heading: string; exact: string; prefix: string; suffix: string } }
+export interface LinkFields { annotation: string; excerpt?: string; originalTitle?: string; sourceTitle?: string; transferId?: string; explanation?: { id: string; content: string }; sourceAnchor?: { heading: string; exact: string; prefix: string; suffix: string } }
 export interface LinkTarget { href: string; label: string; getContent?: () => string; bodyPending?: boolean; secret?: { findingId: string; caseId: string } }
 
 // A standard Markdown link title preserves the independent fields on roundtrip.
@@ -15,6 +15,8 @@ export function readLinkFields(title: unknown): LinkFields | null {
     if (!fields || typeof fields !== 'object' || !('annotation' in fields) || typeof fields.annotation !== 'string') return null
     return {
       annotation: fields.annotation,
+      ...('transferId' in fields && typeof fields.transferId === 'string' && fields.transferId.length <= 150 ? { transferId: fields.transferId } : {}),
+      ...('explanation' in fields && fields.explanation && typeof fields.explanation === 'object' && 'id' in fields.explanation && typeof fields.explanation.id === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(fields.explanation.id) && 'content' in fields.explanation && typeof fields.explanation.content === 'string' && fields.explanation.content.length <= 256000 ? { explanation: { id: fields.explanation.id, content: fields.explanation.content } } : {}),
       ...('excerpt' in fields && typeof fields.excerpt === 'string' ? { excerpt: fields.excerpt } : {}),
       ...('originalTitle' in fields && typeof fields.originalTitle === 'string' ? { originalTitle: fields.originalTitle } : {}),
       ...('sourceTitle' in fields && typeof fields.sourceTitle === 'string' ? { sourceTitle: fields.sourceTitle } : {}),

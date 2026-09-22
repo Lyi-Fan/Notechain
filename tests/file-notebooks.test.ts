@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isMarkdownLink, noteFileUrl, resolveFilePath, relativeFileLink, saveNoteFile, flushNoteFiles, unsavedFiles } from '../src/file-notebooks'
+import { parseNotebookHref, transferHref, fileReadingKey, isMarkdownLink, noteFileUrl, resolveFilePath, relativeFileLink, saveNoteFile, flushNoteFiles, unsavedFiles } from '../src/file-notebooks'
 import { configureNative } from '../src/native-storage'
+
+test('reading keys stay short for long Chinese paths and distinguish notebook identities', () => {
+  const key = fileReadingKey('book', '很长的分类/'.repeat(100) + '笔记.md')
+  assert(key.startsWith('asset-ledger-'))
+  assert(key.length < 150)
+  assert.equal(key, fileReadingKey('book', '很长的分类/'.repeat(100) + '笔记.md'))
+  assert.notEqual(fileReadingKey('a:b', 'c'), fileReadingKey('a', 'b:c'))
+})
 
 test('relative Markdown and image paths retain nested directories, unicode and anchors', () => {
   assert.deepEqual(resolveFilePath('分类/笔记.md', '../图片/图一.png'), {path: '图片/图一.png', hash: ''})
@@ -41,4 +49,13 @@ test('relative links cannot escape the root or smuggle URL schemes', () => {
   assert(isMarkdownLink('文件.markdown#标题'))
   assert(!isMarkdownLink('https://example.com/file.md'))
   assert(!isMarkdownLink('javascript:test.md'))
+})
+
+test('tray file links retain their original notebook instead of becoming relative Markdown paths', () => {
+  const origin = noteFileUrl('book-a', '目录/来源.md')
+  const href = transferHref('../参考.md#说明', origin)
+  assert.deepEqual(parseNotebookHref(href), { id:'book-a', path:'参考.md', href:noteFileUrl('book-a','参考.md')+'#'+encodeURIComponent('说明') })
+  assert(!isMarkdownLink(href))
+  assert.equal(transferHref(href, noteFileUrl('book-b','目标.md')), href)
+  assert.equal(parseNotebookHref('/notebooks/b?file=..%2Foutside.md'), null)
 })

@@ -30,6 +30,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 tokio = { version = "1", features = ["net", "time", "sync"] }
 url = "2"
+percent-encoding = "2"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.9"
 scraper = "0.24"

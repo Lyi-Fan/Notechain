@@ -33,7 +33,7 @@ export async function flushNative(): Promise<void> {
       } catch (failure) {
         pending.unshift(...batch)
         error = failure
-        window.dispatchEvent(new Event('ledger-storage-error'))
+        window.dispatchEvent(new CustomEvent('ledger-storage-error', { detail: String(failure) }))
         throw failure
       }
     }

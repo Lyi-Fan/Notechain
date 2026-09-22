@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, writeFile, rename, rm } from 'node:fs/promises'
 import { spawn, execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
@@ -15,6 +15,13 @@ const directory=await mkdtemp(path.join(root,'.qa/runtime-'))
 await mkdir(path.join(directory,'Notebook/Category/Nested'),{recursive:true})
 await writeFile(path.join(directory,'Notebook/Category/Nested/中文 [1].md'),'# 文件笔记\n\n原始内容。\n')
 const image=(await readFile(path.join(root,'extension/icons/ledger-128.png'))).toString('base64')
+await mkdir(path.join(directory,'Notebook/Examples'),{recursive:true})
+await mkdir(path.join(directory,'Notebook/assets'),{recursive:true})
+await writeFile(path.join(directory,'Notebook/assets/Pasted image 20260922114737.png'),Buffer.from(image,'base64'))
+await writeFile(path.join(directory,'Notebook/Examples/图片兼容.md'),'# 图片兼容\n\n![[Pasted image 20260922114737.png]]\n\n![[assets/Pasted image 20260922114737.png|160]]\n\n![Typora](../assets/Pasted image 20260922114737.png)\n\n<img src="../assets/Pasted image 20260922114737.png" width="180">\n\n正文末尾。\n')
+for (const [name,body] of Object.entries({'语法.md':'# 语法\n\n测试文字。','来源.md':'# 消息队列\n\n消息队列按先进先出的顺序处理任务。生产者与消费者可以分别扩展。','目标.md':'# 接口重试\n\n重复请求应满足幂等性，避免重复创建订单。','第二份.md':'# 摘要\n\n保留来源。'})) await writeFile(path.join(directory,'Notebook/Examples',name),body+'\n')
+const retryFile=path.join(directory,'Notebook/Examples/保存重试.md')
+await writeFile(retryFile,'# 保存重试\n\n目标正文。\n')
 let child, exited, spawnError
 function start() {
   spawnError=undefined
@@ -47,6 +54,19 @@ start()
 try {
   const script=await readFile(path.join(root,'tests/runtime-smoke.js'),'utf8')
   const report=await command(`const fixtureImage=${JSON.stringify(image)}, fixtureDirectory=${JSON.stringify(directory)}, expectedPlatform=${JSON.stringify(mac?'macos':'windows')};\n${script}`)
+  const compatibility=await command(`const fixtureImage=${JSON.stringify(image)}, bookId=${JSON.stringify(report.book)};\n`+await readFile(path.join(root,'tests/runtime-compat.js'),'utf8'))
+  report.checks.push(...compatibility.checks)
+  const retryScript=await readFile(path.join(root,'tests/runtime-transfer-retry.js'),'utf8')
+  await command(`const bookId=${JSON.stringify(report.book)},phase="stage";\n${retryScript}`)
+  try {
+    await chmod(retryFile,0o444)
+    const failed=await command(`const bookId=${JSON.stringify(report.book)},phase="fail";\n${retryScript}`)
+    report.checks.push(...failed.checks)
+  } finally { await chmod(retryFile,0o644) }
+  const retried=await command(`const bookId=${JSON.stringify(report.book)},phase="retry";\n${retryScript}`)
+  report.checks.push(...retried.checks)
+  const assetTransfer=await command(`const sourceId=${JSON.stringify(report.id)},caseId=${JSON.stringify(report.caseId)};\n`+await readFile(path.join(root,'tests/runtime-asset-transfer.js'),'utf8'))
+  report.checks.push(...assetTransfer.checks)
   const run=(args)=>JSON.parse(execFileSync(cli,['graph',...args,'--connection',path.join(directory,'control.json')],{encoding:'utf8',timeout:65000}))
   assert(run(['cases']).some(item=>item.id===report.caseId))
   const graph=run(['get',report.caseId])
@@ -68,6 +88,9 @@ try {
   await writeFile(path.join(directory,'report.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify({checks:report.checks.length,results:report.checks,directory},null,2))
 } finally {
-  if(child.exitCode===null && !spawnError) { try {await quit()} catch {child.kill()} }
+  if(child.exitCode===null && !spawnError) {
+    try {await quit()} catch { await command("await window.__ledgerTest.invoke('finish_quit');",false).catch(()=>{}); await Promise.race([exited,delay(3000)]) }
+    if(child.exitCode===null) child.kill()
+  }
   if(!spawnError) await exited
 }

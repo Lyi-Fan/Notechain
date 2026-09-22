@@ -97,8 +97,9 @@ pub fn apply(db: &mut Connection, operations: &[Value]) -> Result<(), String> {
     let tx = db.transaction().map_err(|_| "Cannot begin save")?;
     for op in operations {
         if let Some(key) = op["key"].as_str() {
-            if key.len() > 150
-                || !(key.starts_with("asset-ledger-") || key == "activity" || key == "theme")
+            let legacy_reading = key.starts_with("file-reading:");
+            if key.len() > if legacy_reading { 8192 } else { 150 }
+                || !(legacy_reading || key.starts_with("asset-ledger-") || key == "activity" || key == "theme")
             {
                 return Err("Invalid preference key".into());
             }
@@ -163,6 +164,17 @@ pub fn body(db: &Connection, kind: &str, id: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_file_reading_does_not_block_following_note_saves() {
+        let mut db = open(Path::new(":memory:")).unwrap();
+        let key = format!("file-reading:book:{}笔记.md", "嵌套目录/".repeat(30));
+        apply(&mut db, &[
+            json!({"key":key,"value":"300"}),
+            json!({"kind":"assets","id":"image-note","record":{"id":"image-note","noteMarkdown":"![image](/attachments/example.png)"}}),
+        ]).unwrap();
+        assert_eq!(body(&db, "assets", "image-note").unwrap(), "![image](/attachments/example.png)");
+        assert!(apply(&mut db, &[json!({"key":"arbitrary-preference","value":"x"})]).is_err());
+    }
     #[test]
     fn empty_library_preserves_preferences_without_creating_records() {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
