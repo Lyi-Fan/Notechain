@@ -59,7 +59,7 @@ await delay(600);window.dispatchEvent(new Event('ledger-flush-editors'));await q
 const syntax=await call({action:'read',id:bookId,path:'Examples/语法.md'});
 assert(syntax.content.includes('``a`b``'),'Code containing backticks serializes with a safe delimiter');
 const strongStyle=getComputedStyle(editor.view.dom.querySelector('strong')).fontWeight;
-assert(Number(strongStyle)>=700,'Rendered bold text uses a visibly heavier font weight');
+assert(strongStyle==='bold'||Number(strongStyle)>=700,'Rendered bold text uses a visibly heavier font weight');
 
 editor=await open('Examples/目标.md');const assetsBefore=qa.ledger.getState().assets.length;
 let term;editor.state.doc.descendants((node,pos)=>{if(node.isText&&node.text.includes('幂等性'))term=pos+node.text.indexOf('幂等性')});
