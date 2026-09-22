@@ -1,0 +1,55 @@
+name: Desktop Checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run release:audit
+      - run: npm run test:unit
+      - run: npm run test:extension
+      - if: runner.os == 'macOS'
+        run: npm run mac:native
+      - run: npm run test:native
+      - run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin ledger
+      - run: npm run test:cli
+      - if: runner.os == 'Windows'
+        name: PowerShell 5.1
+        shell: powershell
+        run: .\tests\cli-powershell.ps1 -Ledger .\src-tauri\target\debug\ledger.exe
+      - if: runner.os == 'Windows'
+        name: PowerShell 7
+        shell: pwsh
+        run: .\tests\cli-powershell.ps1 -Ledger .\src-tauri\target\debug\ledger.exe
+      - if: runner.os == 'macOS'
+        run: npm run mac:qa
+      - if: runner.os == 'Windows'
+        run: npm run windows:qa
+      - run: npm run test:runtime
+      - if: runner.os == 'macOS'
+        run: npm run mac:build
+      - if: runner.os == 'Windows'
+        run: npm run windows:build
+      - if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent src-tauri/target/release/bundle/macos/Notechain.app Notechain-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Notechain-${{ runner.os }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            Notechain-macOS.zip

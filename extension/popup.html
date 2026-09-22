@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>链迹笔记</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<main>
+  <header class="capture-header"><img src="icons/capture-note.svg" width="28" height="28" alt=""><div><strong>收集到笔记</strong><small id="sourceTitle">当前网页</small></div></header>
+  <section id="pairView" class="view" hidden>
+    <p class="lede">先在桌面端标题栏点击“浏览器连接”，选择“开启配对”，再在此处核对六位验证码。</p>
+    <button id="pair" class="primary" type="button">显示验证码并连接</button>
+    <p id="pairCode" class="pair-code" hidden></p>
+  </section>
+  <section id="captureView" class="view" hidden>
+    <button id="changeCase" class="current" type="button" title="选择案件" aria-label="选择案件"><span aria-hidden="true">‹</span><strong id="caseName">未选择案件</strong></button>
+    <div id="choices" class="choices" aria-label="资产分类"></div>
+    <button id="trayPage" class="secondary" type="button">把当前网页添加到中转站</button>
+    <div id="repair" hidden><p class="section-label">待处理项目</p><div id="repairList"></div></div>
+  </section>
+  <section id="caseView" class="view" hidden><p class="section-label">选择归属案件</p><div id="caseList" class="case-list"></div><button id="back" class="link back" type="button">← 返回</button></section>
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+<script src="popup.js"></script>
+</body></html>

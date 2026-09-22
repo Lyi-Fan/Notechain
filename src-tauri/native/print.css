@@ -1,0 +1,16 @@
+@page { size: A4; margin: 16mm 15mm 18mm; }
+* { box-sizing: border-box; }
+html { color: #1d2624; font: 10.5pt -apple-system, "PingFang SC", sans-serif; }
+body { margin: 0; line-height: 1.66; overflow-wrap: anywhere; background: white; }
+h1,h2,h3,h4,h5,h6 { line-height: 1.24; break-after: avoid-page; margin: 1.4em 0 .6em; }
+h1 { font-size: 22pt; border-bottom: 1px solid #b6c6c1; padding-bottom: .36em; }
+h2 { font-size: 16pt; } h3 { font-size: 12.5pt; }
+img { display: block; max-width: 100%; max-height: 650pt; object-fit: contain; height: auto; break-inside: avoid; margin: .8em 0; }
+pre,code { font-family: Menlo, "PingFang SC", monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f1f5f3; padding: .8em; }
+code { font-size: .9em; }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+th,td { border: 1px solid #c9d5d1; padding: .4em; text-align: left; overflow-wrap: anywhere; }
+thead { display: table-header-group; } tr { break-inside: avoid; }
+blockquote { border-left: 3px solid #668b82; margin-left: 0; padding-left: 1em; }
+a { color: #205d55; }

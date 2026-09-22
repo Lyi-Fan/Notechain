@@ -1,0 +1,13 @@
+:root { --text-selection-bg: #c5c8c4; }
+:root[data-theme='dark'] { --text-selection-bg: #566056; }
+
+/* A shared restrained fallback for native selections outside the rich editor. */
+::selection { background: var(--text-selection-bg); color: inherit; }
+
+.notebook-prose.notebook-has-custom-selection ::selection { background: transparent; }
+.notebook-prose .notebook-selection { background: transparent; border-radius: 4px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.notebook-prose.notebook-has-custom-selection .notebook-selection { background: var(--text-selection-bg); }
+.notebook-prose.is-transferring .notebook-selection { background: transparent; }
+
+.markdown-editor .cm-selectionBackground { background: var(--text-selection-bg) !important; border-radius: 4px; }
+:root .markdown-editor ::selection { background: var(--text-selection-bg); }

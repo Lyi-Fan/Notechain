@@ -1,0 +1,68 @@
+.case-overview-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.case-overview-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 10px 1px; background: transparent; color: var(--muted); font-size: 13px; }
+.case-overview-tabs button[aria-selected='true'] { color: var(--ink); border-bottom-color: var(--forest); }
+.asset-architecture { --graph-bg: #f7f9fa; --graph-node: #fff; --graph-text: #29343b; --graph-muted: #71808a; --graph-line: #cdd5da; --graph-dot: #d7dfe3; --graph-edit: #eee; position: relative; height: min(740px, calc(100vh - 235px)); min-height: 440px; display: flex; flex-direction: column; border: 1px solid var(--graph-line); color: var(--graph-text); background: var(--graph-bg); }
+:root[data-theme='dark'] .asset-architecture { --graph-bg: #000; --graph-node: #141414; --graph-text: #e8e8e8; --graph-muted: #aaa; --graph-line: #444; --graph-dot: #292929; --graph-edit: #292929; }
+.asset-architecture.expanded { position: fixed; inset: 44px 16px 16px; z-index: 80; height: auto; min-height: 0; }
+.architecture-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--graph-line); background: var(--graph-node); }
+.architecture-search { display: flex; align-items: center; gap: 6px; width: 140px; color: var(--graph-muted); }
+.architecture-search input { border: 0; outline: none; min-width: 0; width: 100%; background: transparent; color: var(--graph-text); font-size: 12px; }
+.architecture-toolbar select { width: 110px; max-width: 100%; border: 1px solid var(--graph-line); background: var(--graph-node); color: var(--graph-text); height: 30px; font-size: 12px; border-radius: 4px; }
+.architecture-relations-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; color: var(--graph-muted); }
+.architecture-relations-toggle input { accent-color: #318879; }
+.architecture-count { font-size: 11px; color: var(--graph-muted); margin-left: auto; white-space: nowrap; }
+.architecture-tools { display: flex; gap: 1px; }
+.asset-architecture .icon-button { width: 30px; height: 30px; color: var(--graph-muted); }
+.asset-architecture .icon-button:disabled { opacity: .35; cursor: default; }
+.architecture-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.architecture-canvas .react-flow { --xy-selection-background-color: #31887915; --xy-selection-border: 1px solid #318879; }
+.architecture-node { position: relative; width: 300px; min-height: 108px; padding: 9px 10px; border: 1px solid var(--graph-line); border-left: 3px solid #4e9e8b; border-radius: 8px; background: var(--graph-node); color: var(--graph-text); box-shadow: 0 2px 5px #00000008; }
+.architecture-node.discovered { border-left-color: #a98a54; }
+.architecture-node.selected, .architecture-node.highlighted { outline: 2px solid #4d91bc; outline-offset: 2px; }
+.architecture-node-grip { position: absolute; right: 5px; top: 6px; z-index: 1; display: grid; place-items: center; width: 18px; height: 18px; color: var(--graph-muted); cursor: grab; opacity: .55; }
+.architecture-node-grip:active { cursor: grabbing; }
+.architecture-node:hover .architecture-node-grip { opacity: 1; }
+.architecture-node-fields { display: grid; }
+.architecture-field { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: start; min-width: 0; border-bottom: 1px solid var(--graph-line); padding: 1px 0; }
+.architecture-field > span { padding-top: 3px; color: var(--graph-muted); font-size: 12px; line-height: 20px; }
+.graph-inline-input { display: block; width: 100%; height: 100%; min-width: 0; margin: 0; padding: 2px 4px; border: 1px solid transparent; border-radius: 3px; outline: none; resize: none; background: transparent; color: var(--graph-text); font: inherit; font-size: 14px; line-height: 20px; letter-spacing: 0; overflow-wrap: anywhere; white-space: pre-wrap; overflow-y: auto; scrollbar-width: thin; cursor: text; }
+.graph-inline-input::placeholder { color: var(--graph-muted); opacity: .65; }
+.graph-inline-input:hover { background: var(--graph-bg); }
+.graph-inline-input:focus { background: var(--graph-edit); border-color: #75ab9f; }
+.field-address .graph-inline-input { font-weight: 600; padding-right: 21px; white-space: pre; overflow-wrap: normal; overflow-x: auto; scrollbar-width: none; }
+.field-note { grid-template-columns: 36px minmax(0, 1fr) 21px; border-bottom: 0; }
+.architecture-node-open { display: grid; place-items: center; align-self: end; width: 21px; height: 21px; margin-bottom: 2px; padding: 3px; border: 0; border-radius: 3px; background: transparent; color: var(--graph-muted); }
+.architecture-node-open:hover { background: var(--graph-edit); color: var(--graph-text); }
+.architecture-node .react-flow__handle, .architecture-branch .react-flow__handle { width: 11px; height: 11px; min-width: 11px; min-height: 11px; background: #529e90; border: 2px solid var(--graph-node); opacity: 0; transition: opacity .12s; }
+.architecture-node:hover .react-flow__handle, .architecture-node:focus-within .react-flow__handle, .architecture-node.selected .react-flow__handle { opacity: 1; }
+.architecture-branch { width: 180px; height: 56px; border: 1px solid var(--graph-line); border-radius: 6px; background: var(--graph-node); color: var(--graph-text); }
+.architecture-branch.case { display: flex; align-items: center; gap: 8px; width: 148px; height: 72px; padding: 10px; border-left: 3px solid #6580aa; }
+.architecture-branch button { width: 100%; height: 100%; display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 0; background: transparent; color: inherit; text-align: left; }
+.architecture-branch strong { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; line-height: 18px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.architecture-branch-icon { display: flex; flex-shrink: 0; color: var(--graph-muted); }
+.architecture-branch-count { font-size: 12px; color: var(--graph-muted); }
+.architecture-branch:hover .react-flow__handle, .architecture-branch:focus-within .react-flow__handle { opacity: 1; }
+.architecture-edge-label { position: absolute; padding: 0 3px; border: 1px solid var(--graph-line); border-radius: 4px; font-size: 12px; color: var(--graph-muted); background: var(--graph-node); pointer-events: all; }
+.architecture-edge-label .graph-inline-input { width: 120px; height: 25px; font-size: 12px; line-height: 18px; text-align: center; }
+.architecture-edge-label button { padding: 3px 5px; max-width: 160px; border: 0; background: transparent; color: inherit; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.architecture-edge-label.selected { border-color: #318879; color: #318879; }
+.architecture-relation-tools { display: flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: 12px; background: var(--graph-node); border-bottom: 1px solid var(--graph-line); }
+.architecture-relation-tools > .graph-inline-input { flex: 1; width: 120px; max-width: 240px; height: 28px; margin-right: auto; }
+.architecture-relation-tools > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.architecture-zoom { position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; border: 1px solid var(--graph-line); border-radius: 5px; background: var(--graph-node); }
+.architecture-zoom > span { width: 42px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.architecture-status { position: absolute; right: 14px; bottom: 16px; font-size: 11px; color: var(--graph-muted); background: var(--graph-bg); }
+.architecture-empty { position: absolute; right: 36px; top: 45%; display: flex; align-items: center; gap: 8px; color: var(--graph-muted); background: var(--graph-node); padding: 12px; border: 1px dashed var(--graph-line); border-radius: 6px; font-size: 13px; }
+.architecture-error { display: flex; justify-content: space-between; align-items: center; padding: 5px 12px; background: #fbeceb; color: #99382e; font-size: 12px; }
+.architecture-menu { position: absolute; z-index: 10; width: 185px; padding: 5px; border: 1px solid var(--graph-line); border-radius: 6px; background: var(--graph-node); box-shadow: 0 7px 24px #0002; }
+.architecture-menu button { border: 0; background: transparent; color: var(--graph-text); display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 7px; font-size: 12px; text-align: left; }
+.architecture-menu button:hover { background: var(--graph-bg); }
+.architecture-menu-category { width: 100%; height: 30px; padding: 0 5px; border: 1px solid var(--graph-line); border-radius: 3px; background: var(--graph-node); color: var(--graph-text); font-size: 12px; }
+.architecture-evidence-band { max-height: 180px; overflow: auto; padding: 0 12px 8px; border-top: 1px solid var(--graph-line); background: var(--graph-node); }
+.architecture-evidence-band > header { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+.architecture-evidence { display: flex; align-items: flex-start; gap: 9px; width: 100%; border: 0; border-bottom: 1px solid var(--graph-line); text-align: left; background: transparent; padding: 9px 0; color: var(--graph-text); font-size: 12px; }
+.architecture-evidence span { min-width: 0; overflow-wrap: anywhere; }
+.architecture-evidence small { display: block; color: var(--graph-muted); margin-top: 4px; }
+.architecture-no-evidence { color: var(--graph-muted); font-size: 12px; }
+@media (max-width: 760px) { .architecture-count { display: none; } .architecture-toolbar { gap: 5px; } .architecture-tools { margin-left: auto; } .architecture-search { width: 125px; } .asset-architecture { min-height: 440px; } }
+@media (prefers-reduced-motion: reduce) { .architecture-node .react-flow__handle { transition: none; } }

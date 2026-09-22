@@ -1,0 +1,5 @@
+Notechain uses MiSans, copyright Xiaomi Technology Co., Ltd.
+MiSans is bundled for application typography under the MiSans font license.
+Font source and license: https://hyperos.mi.com/font/zh/
+Web subsets are distributed by the misans npm package:
+https://www.npmjs.com/package/misans

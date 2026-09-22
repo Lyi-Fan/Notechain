@@ -1,0 +1,64 @@
+@import url('fonts/MiSans-Semibold.min.css');
+
+:root {
+  color-scheme: light;
+  font-family: 'MiSans', 'Microsoft YaHei UI', sans-serif;
+  font-size: 14px;
+  font-weight: 520;
+  font-synthesis: none;
+  color: #353537;
+  background: #eeeeef;
+  --surface: #eeeeef;
+  --muted: #737377;
+  --line: #d4d4d7;
+}
+* { box-sizing: border-box; letter-spacing: 0; }
+[hidden] { display: none !important; }
+/* Extension documents receive a browser default body font; inherit ours explicitly. */
+body { width: 312px; margin: 0; font: inherit; line-height: 1.5; background: var(--surface); }
+main { padding: 18px 16px 14px; background: var(--surface); overflow: hidden; }
+button { font: inherit; color: inherit; cursor: pointer; transition: background .16s, border-color .16s, transform .16s; }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid #75757d; outline-offset: 2px; }
+button:active:not(:disabled) { transform: scale(.98); }
+header { display: flex; gap: 10px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+header img { filter: grayscale(1); opacity: .9; }
+header div { min-width: 0; flex: 1; }
+header strong, header small { display: block; }
+header strong { font-size: 17px; font-weight: 520; line-height: 1.4; }
+header small { margin-top: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.capture-header { margin: -18px -16px 0; padding: 18px 16px 16px; background: #c5d5e5; border-bottom-color: #b1c4d8; color: #34485e; }
+.capture-header img { filter: none; opacity: 1; flex-shrink: 0; }
+.capture-header small { color: #536a83; }
+.view { padding-top: 14px; }
+.lede { margin: 0 0 14px; color: #626267; font-size: 14px; line-height: 1.8; }
+.primary, .secondary, .case-item, .choice, .current { width: 100%; border-radius: 13px; font-weight: 520; }
+.primary { padding: 11px; border: 1px solid #515155; background: #515155; color: #fff; }
+.primary:hover { background: #414145; }
+.secondary { min-height: 42px; margin-top: 14px; padding: 10px 12px; border: 1px solid #c8c8cd; background: #dcdcdf; color: #414146; }
+.secondary:hover { background: #cfcfd4; border-color: #bcbcc3; }
+.current { display: flex; align-items: center; gap: 9px; min-height: 42px; margin: 0 0 10px; padding: 9px 12px; border: 1px solid #d0d0d5; background: #dedee2; text-align: left; }
+.current:hover { background: #d2d2d8; }
+.current span { font-size: 24px; line-height: 22px; color: #73737a; }
+.current strong { font-size: 14px; font-weight: 520; overflow-wrap: anywhere; }
+.link { border: 0; background: transparent; color: #55555c; padding: 4px; font-weight: 520; }
+.choices, .case-list { display: grid; gap: 6px; max-height: 264px; overflow: auto; scrollbar-width: thin; scrollbar-color: #b8b8bf transparent; padding: 2px; margin: -2px; }
+.choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 9px 12px; border: 1px solid #d9d9de; background: #f7f7f8; text-align: left; }
+.choice:hover, .case-item:hover { background: #e4e4e8; border-color: #c5c5cc; }
+.choice-icon { flex: 0 0 18px; width: 18px; height: 18px; }
+.choice-label { flex: 1; overflow-wrap: anywhere; min-width: 0; }
+.choice-add { color: #81818a; font-size: 18px; flex-shrink: 0; line-height: 18px; }
+.section-label { margin: 14px 0 8px; color: var(--muted); font-size: 13px; }
+.case-item { padding: 11px 12px; border: 1px solid #d9d9de; background: #f7f7f8; text-align: left; overflow-wrap: anywhere; }
+.back { margin-top: 12px; }
+.pair-code { margin: 13px 0 0; padding: 12px; border-radius: 13px; background: #dedee2; color: #44444a; text-align: center; font-family: 'MiSans', Consolas, monospace; font-size: 24px; font-weight: 520; }
+#repairList { max-height: 160px; overflow: auto; scrollbar-width: thin; }
+.repair-item { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 8px; border: 1px solid #d0d0d5; border-radius: 11px; background: #e4e4e7; font-size: 13px; }
+.repair-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repair-action { border: 0; border-radius: 7px; background: #d0d0d6; color: #505058; padding: 5px 7px; font-size: 13px; flex-shrink: 0; }
+#status { margin: 12px 2px 0; color: #6e6e76; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+#status:empty { display: none; }
+.options-page { width: min(440px, 100%); margin: 40px auto; }
+.permission-setting { display: flex; align-items: center; gap: 12px; padding: 18px 0 4px; }
+.permission-setting input { width: 18px; height: 18px; margin: 0; accent-color: #5d5d65; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

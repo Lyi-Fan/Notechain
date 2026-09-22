@@ -1,0 +1,9 @@
+:root[data-platform='mac'] { --ui-font: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; --mono: Menlo, 'PingFang SC', monospace; }
+:root[data-platform='mac'] body { font-family: var(--ui-font); }
+:root[data-platform='mac'] .workspace-header, :root[data-platform='mac'] .home-topbar { padding-left: 88px; height: 48px; min-height: 48px; flex-basis: 48px; }
+:root[data-platform='mac'] .desktop-chrome button:not([aria-label='浏览器连接']):not([aria-label='刘海中转站']) { display: none; }
+:root[data-notch-connected='true'] .desktop-chrome button[aria-label='刘海中转站'] { color: #268561; }
+:root[data-platform='windows'] { --ui-font: 'Segoe UI', 'Microsoft YaHei UI', sans-serif; --mono: Consolas, 'Microsoft YaHei', monospace; }
+:root[data-platform='windows'] .workspace-header, :root[data-platform='windows'] .home-topbar { height: 48px; min-height: 48px; flex-basis: 48px; }
+:root[data-platform='windows'] .desktop-chrome button { border-radius: 0; width: 40px; height: 32px; }
+:root[data-platform='windows'] .desktop-chrome button[aria-label='关闭']:hover { background: #c42b1c; color: white; }
