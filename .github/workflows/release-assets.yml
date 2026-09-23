@@ -1,0 +1,47 @@
+name: Upload Verified Release Assets
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Desktop Checks run ID
+        required: true
+      tag:
+        description: Existing draft release tag
+        required: true
+permissions:
+  actions: read
+  contents: write
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Verify build and release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" > run.json
+          gh release view "$RELEASE_TAG" --json isDraft,targetCommitish > release.json
+          jq -e '.conclusion == "success" and .path == ".github/workflows/desktop.yml" and .event == "push" and .head_branch == "main"' run.json
+          jq -e '.isDraft == true' release.json
+          test "$(jq -r '.head_sha' run.json)" = "$(jq -r '.targetCommitish' release.json)"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Notechain-Windows
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: artifacts
+      - name: Upload the tested installer to the draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' installers < <(find artifacts -type f -name 'Notechain_*-setup.exe' -print0)
+          test "${#installers[@]}" -eq 1
+          sha256sum "${installers[0]}"
+          gh release upload "$RELEASE_TAG" "${installers[0]}"
