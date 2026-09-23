@@ -16,6 +16,11 @@ await mkdir(path.join(directory,'Notebook/Category/Nested'),{recursive:true})
 await writeFile(path.join(directory,'Notebook/Category/Nested/中文 [1].md'),'# 文件笔记\n\n原始内容。\n')
 const image=(await readFile(path.join(root,'extension/icons/ledger-128.png'))).toString('base64')
 await mkdir(path.join(directory,'Notebook/Examples'),{recursive:true})
+await mkdir(path.join(directory,'Notebook/Examples/合成报告.assets'),{recursive:true})
+await writeFile(path.join(directory,'Notebook/Examples/合成报告.assets/1785287884999.png'),Buffer.from(image,'base64'))
+const relocatedImage=String.raw`C:\Archive\合成报告.assets\1785287884999.png`;
+await writeFile(path.join(directory,'Notebook/Examples/迁移图片.md'),'# 迁移图片\n\n![1785287884999]('+relocatedImage+')\n\n![文件网址](file:///C:/Archive/合成报告.assets/1785287884999.png)\n');
+await writeFile(path.join(directory,'Notebook/Examples/图片预览.md'),'[迁移图片](迁移图片.md)\n');
 await mkdir(path.join(directory,'Notebook/assets'),{recursive:true})
 await writeFile(path.join(directory,'Notebook/assets/Pasted image 20260922114737.png'),Buffer.from(image,'base64'))
 await writeFile(path.join(directory,'Notebook/Examples/图片兼容.md'),'# 图片兼容\n\n![[Pasted image 20260922114737.png]]\n\n![[assets/Pasted image 20260922114737.png|160]]\n\n![Typora](../assets/Pasted image 20260922114737.png)\n\n<img src="../assets/Pasted image 20260922114737.png" width="180">\n\n正文末尾。\n')

@@ -66,3 +66,18 @@ export function remarkImageEmbeds() {
     visit(tree)
   }
 }
+
+export function remarkLocalImagePaths() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === 'image' && /^(?:[a-z]:[\\/]|file:)/i.test(node.url ?? '')) {
+        const data = node.data as { hProperties?: Record<string, unknown> } | undefined
+        node.data = { ...data, hProperties: { ...data?.hProperties, dataLocalImage: node.url } }
+        // Keep the file reference out of browser URL handling; native resolution validates it.
+        node.url = '#notechain-local-image'
+      }
+      node.children?.forEach(visit)
+    }
+    visit(tree)
+  }
+}

@@ -81,6 +81,43 @@ fn image_reference(source: &Path, reference: &str) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
+fn local_image_reference(reference: &str) -> Result<String, String> {
+    let reference = reference.replace('\\', "/");
+    let path = if reference.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:")) {
+        let url = url::Url::parse(&reference).map_err(error)?;
+        if url.host_str().is_some_and(|host| !host.eq_ignore_ascii_case("localhost")) { return Err("Remote file image URLs are not supported".into()); }
+        url.path().to_string()
+    } else { reference };
+    let decoded = percent_encoding::percent_decode_str(&path).decode_utf8().map_err(error)?.replace('\\', "/");
+    let decoded = if decoded.starts_with('/') && windows_drive_path(&decoded[1..]) { decoded[1..].to_string() } else { decoded };
+    if decoded.starts_with("//") || decoded.contains('\0') || (decoded.contains(':') && !windows_drive_path(&decoded)) { return Err("Invalid local image reference".into()); }
+    Ok(decoded)
+}
+fn windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+fn image_under_root(root: &Path, reference: &str) -> Option<PathBuf> {
+    let root = root.to_string_lossy().replace('\\', "/");
+    let root = root.strip_prefix("//?/").unwrap_or(&root).trim_end_matches('/');
+    let prefix = reference.get(..root.len())?;
+    if !(prefix == root || (cfg!(windows) && prefix.eq_ignore_ascii_case(root))) { return None; }
+    let relative = reference.get(root.len()..)?.strip_prefix('/')?;
+    Some(PathBuf::from(relative))
+}
+fn companion_image_reference(source: &Path, reference: &str) -> Option<PathBuf> {
+    if !windows_drive_path(reference) && !reference.starts_with('/') { return None; }
+    let parts: Vec<_> = reference.split('/').collect();
+    let folder = parts.iter().position(|part| {
+        let name = part.to_ascii_lowercase();
+        (name.ends_with(".assets") || name.ends_with("_assets")) && name.len() > 7
+    })?;
+    let suffix = &parts[folder..];
+    if suffix.len() < 2 || suffix.iter().any(|part| part.is_empty() || *part == "." || *part == ".." || part.contains(':')) { return None; }
+    let mut path = source.parent()?.to_path_buf();
+    for part in suffix { path.push(part); }
+    Some(path)
+}
 fn allowed(book: &Notebook, path: &Path, ancestors: bool) -> bool {
     book.scopes.iter().any(|scope| scope.is_empty() || path.starts_with(scope) || (ancestors && Path::new(scope).starts_with(path)))
 }
@@ -302,15 +339,14 @@ impl Notebooks {
         let source_path = scoped(&book, source, false)?;
         if !md(&source_path) { return Err("Image source must be a Markdown note".into()); }
         let root = fs::canonicalize(&book.root).map_err(error)?;
-        let decoded = percent_encoding::percent_decode_str(reference).decode_utf8().map_err(error)?;
         let source = source_path.strip_prefix(&root).map_err(error)?;
-        let reference = decoded.replace('\\', "/");
-        let relative = if reference.starts_with("file:") {
-            let path = url::Url::parse(&reference).map_err(error)?.to_file_path().map_err(|_| "Invalid file image URL")?;
-            path.strip_prefix(&root).map_err(|_| "Image is outside the opened notebook")?.to_path_buf()
-        } else if let Ok(path) = Path::new(&reference).strip_prefix(&root) { path.to_path_buf() }
-        else { image_reference(source, &reference)? };
-        let mut found = image_path(&root, &relative).ok();
+        let reference = local_image_reference(reference)?;
+        let relative = image_under_root(&root, &reference).map(Ok).unwrap_or_else(|| image_reference(source, &reference));
+        let mut found = relative.ok().and_then(|path| image_path(&root, &path).ok());
+        // Relocated Typora notebooks keep their named attachment directory beside the note.
+        if found.is_none() {
+            found = companion_image_reference(source, &reference).and_then(|path| image_path(&root, &path).ok());
+        }
         if found.is_none() && wiki {
             let root_relative = image_reference(Path::new("note.md"), &reference)?;
             found = image_path(&root, &root_relative).ok();
@@ -518,6 +554,44 @@ mod tests {
         fs::write(f.path.join("library/book/unrelated/Pasted image 中文.png"), include_bytes!("../icons/icon.png")).unwrap();
         assert!(f.service.resolve_image(&id, "category/nested/note.md", "Pasted image 中文.png", true).unwrap_err().contains("More than one"));
         assert!(f.service.resolve_image(&id, "category/nested/note.md", "附件/Pasted image 中文.png", true).is_ok());
+    }
+    #[test]
+    fn relocated_absolute_images_use_the_notes_companion_folder() {
+        let f = Fixture::new(); let id = f.book();
+        let folder = f.path.join("library/book/category/nested/报告.assets");
+        fs::create_dir_all(folder.join("sub")).unwrap();
+        fs::write(folder.join("1785287884999.png"), include_bytes!("../icons/icon.png")).unwrap();
+        fs::write(folder.join("sub/含 空格.png"), include_bytes!("../icons/icon.png")).unwrap();
+        let source = "category/nested/note.md";
+        for reference in [
+            r"C:\Archive\报告.assets\1785287884999.png",
+            "C:/Archive/报告.assets/1785287884999.png",
+            "file:///C:/Archive/报告.assets/1785287884999.png",
+            "file:///C:/Archive/%E6%8A%A5%E5%91%8A.assets/sub/%E5%90%AB%20%E7%A9%BA%E6%A0%BC.png",
+            "/old-notebook/报告.assets/1785287884999.png",
+            "报告.assets/1785287884999.png",
+        ] { assert_eq!(f.service.resolve_image(&id, source, reference, false).unwrap()["mime"], "image/png", "{reference}"); }
+        assert!(f.service.resolve_image(&id, source, folder.join("1785287884999.png").to_str().unwrap(), false).is_ok());
+        assert!(!f.service.children(&id, "category/nested").unwrap().as_array().unwrap().iter().any(|entry| entry["name"] == "报告.assets"));
+    }
+    #[test]
+    fn companion_images_cannot_escape_or_guess_another_folder() {
+        let f = Fixture::new(); let id = f.book();
+        fs::create_dir_all(f.path.join("library/book/category/nested/报告.assets")).unwrap();
+        fs::write(f.path.join("library/book/category/nested/1785287884999.png"), include_bytes!("../icons/icon.png")).unwrap();
+        fs::write(f.path.join("library/book/category/nested/报告.assets/not-image.png"), "not an image").unwrap();
+        for reference in ["C:/old/报告.assets/../1785287884999.png", "C:/old/报告.assets/%2e%2e/1785287884999.png", "C:/old/报告.assets/not-image.png", "C:/old/other.assets/1785287884999.png", "https://example.test/报告.assets/1785287884999.png", "file://remote/报告.assets/1785287884999.png"] {
+            assert!(f.service.resolve_image(&id, "category/nested/note.md", reference, false).is_err(), "{reference}");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn relocated_images_do_not_follow_symlinked_companion_folders() {
+        let f = Fixture::new(); let id = f.book();
+        fs::create_dir_all(f.path.join("external")).unwrap();
+        fs::write(f.path.join("external/image.png"), include_bytes!("../icons/icon.png")).unwrap();
+        std::os::unix::fs::symlink(f.path.join("external"), f.path.join("library/book/category/nested/报告.assets")).unwrap();
+        assert!(f.service.resolve_image(&id, "category/nested/note.md", "C:/old/报告.assets/image.png", false).is_err());
     }
     #[test]
     fn image_references_cannot_escape_notebook_or_read_non_images() {

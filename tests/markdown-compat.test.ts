@@ -22,6 +22,7 @@ for (const source of [
   '```js\nconst text = "**literal**";\n```\n\n[链接](https://example.test/a "标题")\n\n反斜杠 \\*原样\\*。',
   '![[Pasted image 20260922114737.png]]\n\n![[附件/图片.png|320x180]]\n\n![[image.png|替代文字]]',
   '![说明](<附件/含 空格.png>)\n\n![说明](./附件/含 空格.png)\n\n`![[不解析.png]]`',
+  String.raw`![1785287884999](C:\Archive\报告.assets\1785287884999.png)`,
 ]) test('Markdown round trip: ' + source.slice(0, 40), () => {
   const parsed = parser.parse(source), markdown = parser.serialize(parsed)
   assert.deepEqual(parser.parse(markdown), parsed)

@@ -12,7 +12,7 @@ import { ManagedImageView } from './ManagedImage'
 import { SecretValue } from './SecretValue'
 import { useLedger } from '../store'
 import { isSecretFinding } from '../secrets'
-import { remarkImageEmbeds } from '../image-markdown'
+import { remarkImageEmbeds, remarkLocalImagePaths } from '../image-markdown'
 
 interface MarkdownViewProps {
   content: string
@@ -70,7 +70,7 @@ function CodeBlock({ children, className }: { children?: ReactNode; className?: 
 // URLs remain stripped by rehype-sanitize.
 const sanitizeSchema = {
   ...defaultSchema,
-  attributes: { ...defaultSchema.attributes, img: [...(defaultSchema.attributes?.img ?? []), 'dataWikiImage', 'width', 'height'] },
+  attributes: { ...defaultSchema.attributes, img: [...(defaultSchema.attributes?.img ?? []), 'dataWikiImage', 'dataLocalImage', 'width', 'height'] },
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), 'asset', 'case'],
@@ -85,7 +85,7 @@ export function MarkdownView({ content, onInternalLink }: MarkdownViewProps) {
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkImageEmbeds]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkImageEmbeds, remarkLocalImagePaths]}
         rehypePlugins={[[rehypeSanitize, sanitizeSchema], rehypeHeadingIds]}
         components={{
           code({ className, children, ...props }) {
@@ -105,7 +105,8 @@ export function MarkdownView({ content, onInternalLink }: MarkdownViewProps) {
             return <a href={href} title={tooltip} {...props} target="_blank" rel="noreferrer"><span>{children}</span><ExternalLink size={12} aria-hidden="true" /></a>
           },
           img({ src, alt, title, className, width, height, node }) {
-            return <ManagedImageView src={src} alt={alt} title={title} className={className} width={width} height={height} wiki={!!node?.properties?.dataWikiImage} />
+            const local = node?.properties?.dataLocalImage
+            return <ManagedImageView src={typeof local === 'string' ? local : src} alt={alt} title={title} className={className} width={width} height={height} wiki={!!node?.properties?.dataWikiImage} />
           },
         }}
       >
