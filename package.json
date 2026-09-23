@@ -1,6 +1,6 @@
 {
   "name": "notechain",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,6 +23,7 @@
     "windows:qa": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1 -Qa"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/state": "^6.7.2",

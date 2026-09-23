@@ -89,7 +89,7 @@ body { font-weight: 500; }
 .notebook-prose h3 { font-size: 17px; }
 .notebook-prose h4 { font-size: 15px; }
 .notebook-prose h1, .notebook-prose h2, .notebook-prose h3, .notebook-prose h4 { margin: 27px 0 11px; line-height: 1.5; font-weight: 600; }
-.notebook-prose strong { font-weight: 600; }
+.notebook-prose strong, .notebook-preview-reader .markdown-body strong { font-size: 1.025em; font-weight: 760; font-variation-settings: 'wght' 760; }
 .notebook-prose a, .notebook-connections a, .notebook-address a, .notebook-finding-context > a, .notebook-origin a { color: var(--note-link-ink); background: var(--note-link-bg); border: 1px solid var(--note-link-border); border-radius: 4px; padding: 0 3px; line-height: 1.4; text-decoration: none; letter-spacing: 0; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
 .notebook-prose a:hover, .notebook-connections a:hover, .notebook-address a:hover, .notebook-finding-context > a:hover, .notebook-origin a:hover { background: var(--note-link-hover); }
 .notebook-prose a:focus-visible, .notebook-connections a:focus-visible, .notebook-address a:focus-visible { outline: 2px solid var(--note-link-ink); outline-offset: 2px; }
