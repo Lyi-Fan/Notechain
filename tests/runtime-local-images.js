@@ -1,0 +1,18 @@
+const qa=window.__ledgerTest, checks=[], delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const wait=async(predicate,message)=>{for(let i=0;i<200;i++){if(predicate())return;await delay(30)}throw new Error(message)};
+const open=async file=>{qa.navigate('/notebooks/'+bookId+'?file='+encodeURIComponent(file));await wait(()=>document.querySelector('[data-file-path="'+file+'"] .tiptap'),'Local image note did not open');};
+await open('Examples/本机图片.md');
+await wait(()=>document.querySelectorAll('.tiptap img').length===5,'Local image syntaxes were not parsed');
+for(const image of document.querySelectorAll('.tiptap img')) image.scrollIntoView({block:'nearest'});
+await wait(()=>[...document.querySelectorAll('.tiptap img')].every(image=>image.naturalWidth===128),'External absolute, relative, wiki or HTML image did not load');
+checks.push('Editor reads external absolute paths, file URLs, relative paths, wiki images and HTML images');
+await open('Examples/本机图片预览.md');
+const link=document.querySelector('.tiptap a');link.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:450,clientY:240}));
+await wait(()=>document.querySelectorAll('[data-kind=file] .markdown-body img').length===5,'External images were removed from the source preview');
+for(const image of document.querySelectorAll('[data-kind=file] .markdown-body img')) image.scrollIntoView({block:'nearest'});
+await wait(()=>[...document.querySelectorAll('[data-kind=file] .markdown-body img')].every(image=>image.naturalWidth===128),'External images failed in the source preview');
+checks.push('Associated note preview reads the same external images');
+await open('Examples/本机图片.md');
+await wait(()=>document.querySelectorAll('.tiptap img').length===5&&[...document.querySelectorAll('.tiptap img')].every(image=>image.naturalWidth===128),'External images failed after reopening');
+checks.push('External images remain visible after reopening the note');
+return {checks};

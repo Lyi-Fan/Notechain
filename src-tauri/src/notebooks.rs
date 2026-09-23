@@ -2,10 +2,11 @@ use crate::{media, Native};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{fs, io::Write, path::{Component, Path, PathBuf}, sync::Mutex};
+use std::{fs, io::{Read, Write}, path::{Component, Path, PathBuf}, sync::Mutex};
 use tauri::{Emitter, Manager};
 
 const MAX_NOTE: u64 = 16 * 1024 * 1024;
+const MAX_IMAGE: u64 = 20 * 1024 * 1024;
 static EARLY_OPEN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,18 +85,54 @@ fn image_reference(source: &Path, reference: &str) -> Result<PathBuf, String> {
 fn local_image_reference(reference: &str) -> Result<String, String> {
     let reference = reference.replace('\\', "/");
     let path = if reference.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:")) {
+        if reference[5..].starts_with("////") { return Err("Remote file image URLs are not supported".into()); }
         let url = url::Url::parse(&reference).map_err(error)?;
         if url.host_str().is_some_and(|host| !host.eq_ignore_ascii_case("localhost")) { return Err("Remote file image URLs are not supported".into()); }
         url.path().to_string()
     } else { reference };
     let decoded = percent_encoding::percent_decode_str(&path).decode_utf8().map_err(error)?.replace('\\', "/");
     let decoded = if decoded.starts_with('/') && windows_drive_path(&decoded[1..]) { decoded[1..].to_string() } else { decoded };
-    if decoded.starts_with("//") || decoded.contains('\0') || (decoded.contains(':') && !windows_drive_path(&decoded)) { return Err("Invalid local image reference".into()); }
+    if decoded.is_empty() || decoded.starts_with("//") || decoded.starts_with("/??/") || decoded.chars().any(char::is_control) { return Err("Invalid local image reference".into()); }
+    let components = if windows_drive_path(&decoded) { &decoded[3..] } else { &decoded };
+    if components.contains(':') { return Err("Invalid local image reference".into()); }
+    if (cfg!(windows) || windows_drive_path(&decoded)) && components.split('/').any(|part| !part.is_empty() && part != "." && part != ".." && !windows_name(part)) {
+        return Err("Invalid Windows image path".into());
+    }
     Ok(decoded)
 }
 fn windows_drive_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+fn explicitly_referenced_image(source: &Path, reference: &str) -> Result<Option<PathBuf>, String> {
+    // Foreign drive paths can still use the companion-folder fallback on macOS.
+    if !cfg!(windows) && windows_drive_path(reference) { return Ok(None); }
+    let reference = Path::new(reference);
+    if reference.has_root() && !reference.is_absolute() { return Ok(None); }
+    let path = if reference.is_absolute() { reference.to_path_buf() } else { source.parent().ok_or("Image source directory unavailable")?.join(reference) };
+    let real = match fs::canonicalize(&path) {
+        Ok(real) => real,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(error(e)),
+    };
+    #[cfg(windows)]
+    if !matches!(real.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))) {
+        return Err("Image must resolve to a local disk file".into());
+    }
+    if !real.is_file() { return Err("Image must be a regular file".into()); }
+    Ok(Some(real))
+}
+fn read_local_image(path: &Path) -> Result<Value, String> {
+    use base64::Engine;
+    let file = fs::File::open(path).map_err(error)?;
+    let metadata = file.metadata().map_err(error)?;
+    if !metadata.is_file() { return Err("Image must be a regular file".into()); }
+    if metadata.len() > MAX_IMAGE { return Err("Image exceeds 20 MiB".into()); }
+    // Bound the read even if the referenced file grows after its metadata was read.
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE + 1).read_to_end(&mut bytes).map_err(error)?;
+    let (_, mime) = media::inspect(&bytes)?;
+    Ok(json!({"base64":base64::engine::general_purpose::STANDARD.encode(bytes),"mime":mime}))
 }
 fn image_under_root(root: &Path, reference: &str) -> Option<PathBuf> {
     let root = root.to_string_lossy().replace('\\', "/");
@@ -333,7 +370,6 @@ impl Notebooks {
         Ok(json!({"base64": base64::engine::general_purpose::STANDARD.encode(bytes), "mime": mime}))
     }
     pub fn resolve_image(&self, id: &str, source: &str, reference: &str, wiki: bool) -> Result<Value, String> {
-        use base64::Engine;
         if reference.len() > 8192 { return Err("Image path is too long".into()); }
         let book = Self::book(&*self.registry.lock().map_err(error)?, id)?;
         let source_path = scoped(&book, source, false)?;
@@ -341,6 +377,9 @@ impl Notebooks {
         let root = fs::canonicalize(&book.root).map_err(error)?;
         let source = source_path.strip_prefix(&root).map_err(error)?;
         let reference = local_image_reference(reference)?;
+        if let Some(path) = explicitly_referenced_image(&source_path, &reference)? {
+            return read_local_image(&path);
+        }
         let relative = image_under_root(&root, &reference).map(Ok).unwrap_or_else(|| image_reference(source, &reference));
         let mut found = relative.ok().and_then(|path| image_path(&root, &path).ok());
         // Relocated Typora notebooks keep their named attachment directory beside the note.
@@ -371,10 +410,8 @@ impl Notebooks {
                 found = matches.pop();
             }
         }
-        let path = found.ok_or("Image was not found inside the opened notebook")?;
-        if fs::metadata(&path).map_err(error)?.len() > 20 * 1024 * 1024 { return Err("Image exceeds 20 MB".into()); }
-        let bytes = fs::read(path).map_err(error)?; let (_, mime) = media::inspect(&bytes)?;
-        Ok(json!({"base64":base64::engine::general_purpose::STANDARD.encode(bytes),"mime":mime}))
+        let path = found.ok_or("Referenced image was not found")?;
+        read_local_image(&path)
     }
     pub fn import_image(&self, id: &str, value: &str, bytes: &[u8]) -> Result<Value, String> {
         let book = Self::book(&*self.registry.lock().map_err(error)?, id)?;
@@ -594,11 +631,49 @@ mod tests {
         assert!(f.service.resolve_image(&id, "category/nested/note.md", "C:/old/报告.assets/image.png", false).is_err());
     }
     #[test]
-    fn image_references_cannot_escape_notebook_or_read_non_images() {
+    fn missing_or_non_image_references_are_rejected() {
         let f = Fixture::new(); let id = f.book();
-        for reference in ["../../../outside.png", "../../.fan/secret.png", "javascript:alert(1)", "note.md", "file:///etc/passwd"] {
+        for reference in ["../../../outside.png", "../../.fan/secret.png", "javascript:alert(1)", "note.md"] {
             assert!(f.service.resolve_image(&id, "category/nested/note.md", reference, false).is_err(), "{reference}");
         }
+    }
+    #[test]
+    fn explicit_external_images_are_read_only_and_take_precedence() {
+        use base64::Engine;
+        let f = Fixture::new(); let id = f.book(); let source = "category/nested/note.md";
+        let folder = f.path.join("外部 图片/报告.assets");
+        fs::create_dir_all(&folder).unwrap();
+        let image = folder.join("中文 图片.png");
+        let bytes = include_bytes!("../icons/icon.png"); fs::write(&image, bytes).unwrap();
+        let companion = f.path.join("library/book/category/nested/报告.assets");
+        fs::create_dir_all(&companion).unwrap(); fs::write(companion.join("中文 图片.png"), "must not choose the fallback").unwrap();
+        let references = [image.to_string_lossy().into_owned(), url::Url::from_file_path(&image).unwrap().to_string(), "../../../../外部 图片/报告.assets/中文 图片.png".into()];
+        for reference in references {
+            let result = f.service.resolve_image(&id, source, &reference, false).unwrap();
+            assert_eq!(result["base64"], base64::engine::general_purpose::STANDARD.encode(bytes));
+        }
+        assert_eq!(fs::read(&image).unwrap(), bytes);
+        assert_eq!(fs::read_to_string(f.path.join("library/book").join(source)).unwrap(), "# Synthetic\n");
+        assert!(f.service.save(&id, "../../external.md", "", "must not write outside").is_err());
+    }
+    #[test]
+    fn local_images_reject_network_devices_protocols_and_streams() {
+        for reference in [r"\\server\share\image.png", r"\\?\C:\image.png", r"\\.\PhysicalDrive0", r"\??\C:\image.png", "file://server/share/image.png", "file:////server/share/image.png", "%2f%2fserver/share/image.png", "C:/NUL.png", "C:/CON", "C:/image.png:stream", "C:relative.png", "javascript:alert(1)", "https://example.test/image.png", "data:image/png;base64,abc"] {
+            assert!(local_image_reference(reference).is_err(), "{reference}");
+        }
+    }
+    #[test]
+    fn external_reads_enforce_image_format_size_and_dimensions() {
+        let f = Fixture::new(); let id = f.book(); let source = "category/nested/note.md";
+        let file = f.path.join("external.png"); fs::write(&file, "not an image").unwrap();
+        assert!(f.service.resolve_image(&id, source, file.to_str().unwrap(), false).is_err());
+        fs::File::create(&file).unwrap().set_len(MAX_IMAGE + 1).unwrap();
+        assert!(f.service.resolve_image(&id, source, file.to_str().unwrap(), false).unwrap_err().contains("20 MiB"));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(30001, 1).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        fs::write(&file, bytes.into_inner()).unwrap();
+        assert!(f.service.resolve_image(&id, source, file.to_str().unwrap(), false).unwrap_err().contains("dimensions"));
+        assert!(f.service.resolve_image(&id, source, f.path.to_str().unwrap(), false).is_err());
     }
     #[test]
     fn category_registers_parent_and_whitelists_only_selected_directory() {

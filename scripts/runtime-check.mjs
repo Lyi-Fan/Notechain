@@ -4,6 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 
 const root=path.resolve(import.meta.dirname,'..'), mac=process.platform==='darwin'
 if (!mac && process.platform!=='win32') throw new Error('A native Mac or Windows desktop is required')
@@ -15,7 +17,23 @@ const directory=await mkdtemp(path.join(root,'.qa/runtime-'))
 await mkdir(path.join(directory,'Notebook/Category/Nested'),{recursive:true})
 await writeFile(path.join(directory,'Notebook/Category/Nested/中文 [1].md'),'# 文件笔记\n\n原始内容。\n')
 const image=(await readFile(path.join(root,'extension/icons/ledger-128.png'))).toString('base64')
+const externalImages=await mkdtemp(path.join(tmpdir(),'notechain-external-images-'))
+const externalFile=path.join(externalImages,'_外部 图片.png')
+await writeFile(externalFile,Buffer.from(image,'base64'))
+await mkdir(path.join(directory,'External Images'),{recursive:true})
+await writeFile(path.join(directory,'External Images/相对 图片.png'),Buffer.from(image,'base64'))
 await mkdir(path.join(directory,'Notebook/Examples'),{recursive:true})
+const externalSource = [
+  '# 本机图片',
+  `![absolute](<${externalFile}>)`,
+  `![file URL](${pathToFileURL(externalFile).href})`,
+  '![relative](<../../External Images/相对 图片.png>)',
+  `![[${externalFile}|128]]`,
+  `<img src="${pathToFileURL(externalFile).href}" width="128">`,
+].join('\n\n')+'\n'
+await writeFile(path.join(directory,'Notebook/Examples/本机图片.md'),externalSource)
+await writeFile(path.join(directory,'Notebook/Examples/本机图片预览.md'),'[本机图片](本机图片.md)\n')
+if (!mac && process.env.CI) assert.notEqual(path.parse(externalFile).root.toLowerCase(),path.parse(directory).root.toLowerCase(),'Windows CI must verify a note and image on different drives')
 await mkdir(path.join(directory,'Notebook/Examples/合成报告.assets'),{recursive:true})
 await writeFile(path.join(directory,'Notebook/Examples/合成报告.assets/1785287884999.png'),Buffer.from(image,'base64'))
 const relocatedImage=String.raw`C:\Archive\合成报告.assets\1785287884999.png`;
@@ -59,6 +77,12 @@ start()
 try {
   const script=await readFile(path.join(root,'tests/runtime-smoke.js'),'utf8')
   const report=await command(`const fixtureImage=${JSON.stringify(image)}, fixtureDirectory=${JSON.stringify(directory)}, expectedPlatform=${JSON.stringify(mac?'macos':'windows')};\n${script}`)
+  const localImages=await command(`const bookId=${JSON.stringify(report.book)};\n`+await readFile(path.join(root,'tests/runtime-local-images.js'),'utf8'))
+  report.checks.push(...localImages.checks)
+  assert.equal(await readFile(path.join(directory,'Notebook/Examples/本机图片.md'),'utf8'),externalSource,'Reading external images must not rewrite Markdown')
+  assert.equal((await readFile(externalFile)).toString('base64'),image,'Reading external images must not change the original image')
+  report.checks.push('External image reads preserve the Markdown and original image')
+  if (!mac && process.env.CI) report.checks.push('Windows note and external image are on different drives')
   const compatibility=await command(`const fixtureImage=${JSON.stringify(image)}, bookId=${JSON.stringify(report.book)};\n`+await readFile(path.join(root,'tests/runtime-compat.js'),'utf8'))
   report.checks.push(...compatibility.checks)
   const retryScript=await readFile(path.join(root,'tests/runtime-transfer-retry.js'),'utf8')
@@ -98,4 +122,5 @@ try {
     if(child.exitCode===null) child.kill()
   }
   if(!spawnError) await exited
+  await rm(externalImages,{recursive:true,force:true})
 }

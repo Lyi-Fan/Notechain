@@ -1,12 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ReactMarkdown from 'react-markdown'
 import { MarkdownManager } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { createNotebookMarkdown } from '../src/notebook-markdown'
-import { CompatibleImage } from '../src/image-markdown'
+import { CompatibleImage, remarkImageEmbeds, remarkLocalImagePaths } from '../src/image-markdown'
 import { NotebookBold, NotebookInlineCode, NotebookItalic, NotebookStrike, inlineMarkdownMatch, inlineMarkdownAtCursor } from '../src/markdown-formatting'
 import { protectMarkdownRoundTrip } from '../src/markdown-serialization'
 
@@ -64,5 +67,26 @@ test('CommonMark and GFM syntax matrix keeps every supported construct', () => {
     visit(parsed)
     for (const type of types) assert(found.has(type), `${name} contains ${type}`)
     assert.deepEqual(parser.parse(parser.serialize(parsed)), parsed, `${name} round trips`)
+  }
+})
+
+test('external Windows image paths retain literal backslashes and punctuation', () => {
+  const path = String.raw`C:\External\_中文 图片.png`
+  for (const source of [`![image](<${path}>)`, `![image](${path})`]) {
+    const image = parser.parse(source).content?.[0]
+    assert.equal(image?.attrs?.src, path)
+    assert.equal(parser.parse(parser.serialize({ type: 'doc', content: [image!] })).content?.[0]?.attrs?.src, path)
+  }
+})
+
+test('previews retain Windows backslashes in standard and wiki image references', () => {
+  const path = String.raw`C:\External\_中文 图片.png`
+  for (const source of [`![image](<${path}>)`, `![[${path}|128]]`]) {
+    let actual: unknown
+    renderToStaticMarkup(createElement(ReactMarkdown, {
+      children: source, remarkPlugins: [remarkImageEmbeds, remarkLocalImagePaths],
+      components: { img: ({ node }) => { actual = node?.properties?.dataLocalImage; return null } },
+    }))
+    assert.equal(actual, path)
   }
 })
